@@ -425,21 +425,21 @@ class GameUI:
             border = int(8 + 12 * pulse)
             cv2.rectangle(frame, (0, 0), (self.w, self.h), (0, 0, 220), border)
 
-            # Baslik
+            # Baslik (asagiya cekildi: h/2-20)
             title = f"{sanitize_text(enemy_name)} SALDIRIYOR!"
             (tw, _), _ = cv2.getTextSize(title, self.FONT_BOLD, 1.3, 3)
-            cv2.putText(frame, title, ((self.w - tw) // 2, self.h // 2 - 60),
+            cv2.putText(frame, title, ((self.w - tw) // 2, self.h // 2 - 20),
                         self.FONT_BOLD, 1.3, (50, 50, 255), 3, cv2.LINE_AA)
 
-            # Hasar bilgisi
+            # Hasar bilgisi (asagiya cekildi: h/2+60)
             dmg_text = f"-{damage} HP"
             (tw2, _), _ = cv2.getTextSize(dmg_text, self.FONT_BOLD, 1.8, 3)
             y_offset = int(20 * (1 - progress))
-            cv2.putText(frame, dmg_text, ((self.w - tw2) // 2, self.h // 2 + 20 + y_offset),
+            cv2.putText(frame, dmg_text, ((self.w - tw2) // 2, self.h // 2 + 60 + y_offset),
                         self.FONT_BOLD, 1.8, (0, 0, 255), 3, cv2.LINE_AA)
 
-        # Progress bar (zamanlayici)
-        bar_x, bar_y = 60, self.h // 2 + 80
+        # Progress bar (zamanlayici - asagiya cekildi: h/2+120)
+        bar_x, bar_y = 60, self.h // 2 + 120
         bar_w, bar_h = self.w - 120, 12
         fill_w = int(bar_w * progress)
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h),
@@ -450,10 +450,10 @@ class GameUI:
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h),
                       (120, 120, 120), 1)
 
-        # Alt bilgi
+        # Alt bilgi (asagiya cekildi: h/2+160)
         hint = "Savunma basarili!" if blocked else "Hazirlan! Sira sana gelecek..."
         (tw3, _), _ = cv2.getTextSize(hint, self.FONT, 0.7, 1)
-        cv2.putText(frame, hint, ((self.w - tw3) // 2, self.h // 2 + 120),
+        cv2.putText(frame, hint, ((self.w - tw3) // 2, self.h // 2 + 160),
                     self.FONT, 0.7, (180, 180, 180), 1, cv2.LINE_AA)
 
         return frame

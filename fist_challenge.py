@@ -42,6 +42,7 @@ class FistChallenge:
         self.total_squares: int = 3
         self._challenge_completed: bool = False
         self._result_accuracy: float = 0.0
+        self.result_extra_text: str = ""  # Hasar bilgisi icin
 
     def start_challenge(self, action: str) -> None:
         """Yeni bir yumruk challenge'i baslatir."""
@@ -248,6 +249,15 @@ class FistChallenge:
             cv2.putText(frame, act_text, ((self.w - actw) // 2, cy + 85),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 2, cv2.LINE_AA)
 
+            # Ekstra bilgi (hasar, vs.)
+            if self.result_extra_text:
+                (etw, _), _ = cv2.getTextSize(self.result_extra_text,
+                                               cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+                extra_color = (50, 255, 100) if self._result_accuracy >= 70 else (50, 200, 255)
+                cv2.putText(frame, self.result_extra_text,
+                            ((self.w - etw) // 2, cy + 125),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, extra_color, 2, cv2.LINE_AA)
+
         return frame
 
     def is_done(self) -> bool:
@@ -266,3 +276,4 @@ class FistChallenge:
         self.hit_count = 0
         self._challenge_completed = False
         self._result_accuracy = 0.0
+        self.result_extra_text = ""

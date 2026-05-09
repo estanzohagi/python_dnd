@@ -63,6 +63,7 @@ class ShapeChallenge:
         self.accuracy: float = 0.0
         self.combat_action: str = ""
         self._challenge_completed: bool = False
+        self.result_extra_text: str = ""  # Hasar bilgisi icin
 
     def start_challenge(self, shape_type: ShapeType, action: str = "") -> None:
         """Yeni bir sekil cizme challenge'i baslatir."""
@@ -140,6 +141,7 @@ class ShapeChallenge:
         self.accuracy = 0.0
         self.combat_action = ""
         self._challenge_completed = False
+        self.result_extra_text = ""
 
     # ------------------------------------------------------------------ #
     #  CIZIM METODLARI                                                    #
@@ -174,7 +176,7 @@ class ShapeChallenge:
         cv2.putText(frame, count_text, ((self.w - tw2) // 2, self.h // 2 + th2 // 2 + 20),
                     self.FONT_BOLD, 4.0, (50, 215, 255), 4, cv2.LINE_AA)
 
-        hint = "Sekli parmagınla ciz!"
+        hint = "Sekli parmaginla ciz!"
         (tw3, _), _ = cv2.getTextSize(hint, self.FONT, 0.7, 1)
         cv2.putText(frame, hint, ((self.w - tw3) // 2, self.h // 2 + 80),
                     self.FONT, 0.7, (180, 180, 180), 1, cv2.LINE_AA)
@@ -261,6 +263,13 @@ class ShapeChallenge:
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (40, 40, 40), -1)
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h), color, -1)
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (120, 120, 120), 2)
+
+        # Ekstra bilgi (hasar, vs.)
+        if self.result_extra_text:
+            (tw4, _), _ = cv2.getTextSize(self.result_extra_text, self.FONT_BOLD, 0.9, 2)
+            extra_color = (50, 255, 100) if self.accuracy >= 70 else (50, 200, 255)
+            cv2.putText(frame, self.result_extra_text, ((self.w - tw4) // 2, self.h // 2 + 145),
+                        self.FONT_BOLD, 0.9, extra_color, 2, cv2.LINE_AA)
 
         return frame
 

@@ -557,6 +557,12 @@ class DnDGame:
         finger_pos = self.tracker.detect_finger(frame)
         result = self.shape_challenge.update(finger_pos)
 
+        # Result state'inde hasar bilgisini goster
+        if (self.shape_challenge.state.value == "result"
+                and not self.shape_challenge.result_extra_text):
+            accuracy, action = self.shape_challenge.get_result()
+            self.shape_challenge.result_extra_text = self._get_combat_preview(accuracy, action)
+
         # Challenge UI ciz
         frame = self.shape_challenge.draw(frame)
 
@@ -583,6 +589,12 @@ class DnDGame:
 
         self.fist_challenge.update(fist_pos, is_fist)
 
+        # Result state'inde hasar bilgisini goster
+        if (self.fist_challenge.state.value == "result"
+                and not self.fist_challenge.result_extra_text):
+            accuracy, action = self.fist_challenge.get_result()
+            self.fist_challenge.result_extra_text = self._get_combat_preview(accuracy, action)
+
         # Challenge UI ciz
         frame = self.fist_challenge.draw(frame)
 
@@ -603,6 +615,36 @@ class DnDGame:
             accuracy, action = self.fist_challenge.get_result()
             print(f"[>] Yumruk sonucu: %{accuracy:.0f} dogruluk - {action}")
             self._process_player_combat_result(accuracy, action, is_shape=False)
+
+    def _get_combat_preview(self, accuracy: float, action: str) -> str:
+        """Challenge sonucuna gore hasar on izleme metni olusturur."""
+        action_lower = action.lower()
+        is_attack = action_lower in ("saldir", "saldiri", "buyu")
+        is_defense = action_lower in ("savun", "savunma")
+        is_flee = action_lower in ("kac", "kacis")
+
+        if is_attack:
+            if accuracy >= 85:
+                return "KRITIK! Dusmana buyuk hasar!"
+            elif accuracy >= 70:
+                return "Dusmana hasar verildi!"
+            elif accuracy >= 40:
+                return "Dusmana az hasar verildi."
+            else:
+                return "Dusmana hasar verilemedi!"
+        elif is_defense:
+            if accuracy >= 70:
+                return "Kalkan aktif! Hasar engellendi!"
+            elif accuracy >= 40:
+                return "Kismi kalkan! Hasar azalacak."
+            else:
+                return "Kalkan yok! Tam hasar gelecek."
+        elif is_flee:
+            if accuracy >= 70:
+                return "Basariyla kaciliyor!"
+            else:
+                return "Kacilamadi! Hasar gelecek."
+        return ""
 
     # ------------------------------------------------------------------ #
     #  AI & RESTART                                                       #
