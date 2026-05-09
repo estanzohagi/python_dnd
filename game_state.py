@@ -200,6 +200,9 @@ class GameState:
         # Guard 2: Savasa ilk girildiginde HP dusmesin
         elif just_entered_combat:
             hp_change = 0
+        # Guard 3: Savas modunda HP degisimi challenge+dusman sistemi tarafindan yonetilir
+        elif self.current_mode == "savas":
+            hp_change = 0
 
         if isinstance(hp_change, (int, float)) and hp_change != 0:
             self.modify_hp(int(hp_change))
@@ -431,7 +434,7 @@ class GameState:
             '{"hikaye_metni": "...", "feedback": "...", "mod": "kesif", "secenek_sayisi": 4, '
             '"hp_degisim": 0, "altin_degisim": 0, '
             '"secenekler": {"sol_ust": "...", "sag_ust": "...", "sol_alt": "...", "sag_alt": "..."}}\n'
-            "4. Hikaye 3 cumleyi, secenekler 5 kelimeyi gecmesin.\n"
+            "4. Hikaye 3-4 cumleyi, secenekler 5-6 kelimeyi gecmesin.\n"
             "5. MOD ALANI (ZORUNLU):\n"
             "   - 'kesif': Normal kesif. secenek_sayisi 2-4 arasi. Duruma gore karar ver: bazen 2, bazen 3, bazen 4 secenek sun.\n"
             "   - 'savas': Dusman ile mucadele. secenek_sayisi DAİMA 4. Secenekler KESINLIKLE: sol_ust='Saldir', sag_ust='Savun', sol_alt='Kac', sag_alt='Buyu' olsun.\n"
@@ -444,10 +447,10 @@ class GameState:
             "11. hp_degisim ve altin_degisim DAIMA sayi olmali (0, -10, +20 gibi). Bos birakma.\n"
             "12. SAVAS KURALLARI (COK ONEMLI):\n"
             "   - Savas modunda dusman HER TUR saldirsin. hp_degisim NEGATIF olmali (-5 ile -25 arasi).\n"
-            "   - Oyuncu 'Savun' secerse hasar AZALSIN (hp_degisim -3 ile -8 arasi). Savunma hasari azaltir.\n"
-            "   - Oyuncu 'Saldir' secerse dusmana hasar verir ama kendisi de hasar alir.\n"
-            "   - Oyuncu 'Kac' secerse %50 sans ile kacabilir (basariliysa mod='kesif' yap), basarisizsa ekstra hasar.\n"
-            "   - Oyuncu 'Buyu' secerse guclu saldiri ama HP maliyeti vardir.\n"
+            "   - Oyuncu 'Savun' secerse ve başarılı olursa hasar almayacak. Eğer kısmi başarılı ise düşmanın bir sonraki round vereceği hasar azalacak. Eğer başarısız ise düşman bir sonraki round normal hasar verecek.\n"
+            "   - Oyuncu 'Saldir' secerse dusmana hasar verir.\n"
+            "   - Oyuncu 'Kac' secerse %50 sans ile kacabilir (basariliysa mod='kesif' yap)\n"
+            "   - Oyuncu 'Buyu' secerse guclu saldiri yapar.\n"
             "   - Savas tehlikeli olmali! Oyuncu savunma yapmazsa cok hasar alsin."
         )
 

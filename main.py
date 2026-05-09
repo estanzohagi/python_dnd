@@ -81,6 +81,7 @@ class DnDGame:
 
         # ----- Basarili savunma bayraği -----
         self._defense_blocked: bool = False
+        self._defense_partial: bool = False
 
         # ----- Acilis: Karakter Olusturma -----
         print("[*] Karakter olusturma bekleniyor...")
@@ -384,7 +385,12 @@ class DnDGame:
 
     def _process_attack(self, accuracy: float, action: str,
                         is_shape: bool) -> None:
-        """Saldiri/Buyu sonucunu isler."""
+        """
+        Saldiri/Buyu sonucunu isler.
+
+        Challenge sonucu SADECE dusmana verilen hasari belirler.
+        Oyuncuya hasar VERILMEZ - hasar sadece dusman saldiri fazindan gelir.
+        """
         if is_shape and accuracy >= self.CRITICAL_HIT_THRESHOLD:
             # KRITIK VURUS! (%85+ sadece sekil challenge)
             base_dmg = random.randint(30, 50)
@@ -398,46 +404,57 @@ class DnDGame:
             self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
             self.state.current_feedback = f"Basarili {action}! Dusmana -{enemy_dmg} hasar!"
         elif accuracy >= 40:
-            # Kismi basari: az hasar ver, az hasar al
+            # Kismi basari: az hasar ver (oyuncu hasar almaz, dusman saldiri fazinda alacak)
             enemy_dmg = random.randint(10, 20)
-            player_dmg = random.randint(3, 8)
             self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
-            self.state.modify_hp(-player_dmg)
-            self.state.current_feedback = f"Kismi basari! -{player_dmg} HP, dusmana -{enemy_dmg}"
+            self.state.current_feedback = f"Kismi basari! Dusmana -{enemy_dmg} hasar."
         else:
-            # Basarisiz: oyuncu hasar alir
-            player_dmg = random.randint(10, 20)
-            self.state.modify_hp(-player_dmg)
-            self.state.current_feedback = f"Basarisiz {action}! -{player_dmg} HP"
+            # Basarisiz: dusmana hasar yok (oyuncu hasari dusman fazinda alacak)
+            self.state.current_feedback = f"Basarisiz {action}! Dusman saldirisi geliyor!"
 
     def _process_defense(self, accuracy: float) -> None:
-        """Savunma sonucunu isler."""
+        """
+        Savunma sonucunu isler.
+
+        Savunma ASLA dogrudan hasar vermez. Bunun yerine bir kalkan durumu
+        belirler ve dusmanin bir sonraki saldiri hasarini etkiler:
+          - Basarili (>=70%): Dusmanin saldirisi tamamen engellenir + HP yenilenir
+          - Kismi (>=40%): Dusmanin saldiri hasari %50 azalir
+          - Basarisiz (<40%): Dusman tam hasar verir (ama challenge'dan hasar yok)
+        """
         if accuracy >= 70:
             # Basarili savunma: CAN YENILENIR + dusman saldirisi engellenir
             heal = random.randint(8, 20)
             self.state.modify_hp(heal)
             self.state.current_feedback = f"Mukemmel savunma! +{heal} HP yenilendi!"
             self._defense_blocked = True
+            self._defense_partial = False
             print(f"[+] Savunma basarili! +{heal} HP (dusman saldirisi engellenecek)")
         elif accuracy >= 40:
-            # Kismi savunma: az hasar
-            damage = random.randint(3, 8)
-            self.state.modify_hp(-damage)
-            self.state.current_feedback = f"Zayif savunma! -{damage} HP"
+            # Kismi savunma: hasar yok, ama dusmanin saldirisi %50 azalir
+            self.state.current_feedback = "Kismi savunma! Dusman hasari azalacak."
+            self._defense_blocked = False
+            self._defense_partial = True
+            print(f"[~] Kismi savunma! Dusman hasari yarilayacak")
         else:
-            # Basarisiz savunma: normal hasar
-            damage = random.randint(10, 20)
-            self.state.modify_hp(-damage)
-            self.state.current_feedback = f"Savunma basarisiz! -{damage} HP"
+            # Basarisiz savunma: hasar yok, dusman tam hasar verir
+            self.state.current_feedback = "Savunma basarisiz! Dusman tam hasar verecek."
+            self._defense_blocked = False
+            self._defense_partial = False
+            print(f"[-] Savunma basarisiz! Dusman normal saldirisi gelecek")
 
     def _process_flee(self, accuracy: float) -> None:
-        """Kacis sonucunu isler."""
+        """
+        Kacis sonucunu isler.
+
+        Kacis challenge'i ASLA dogrudan hasar vermez.
+        Basarisiz kacista dusman saldiri fazinda hasar gelir.
+        """
         if accuracy >= 70:
             self.state.current_feedback = "Basariyla kactin!"
         else:
-            damage = random.randint(8, 18)
-            self.state.modify_hp(-damage)
-            self.state.current_feedback = f"Kacilamadi! -{damage} HP"
+            # Basarisiz: kacilamadi (hasar dusman fazinda gelecek)
+            self.state.current_feedback = "Kacilamadi! Dusman saldirisi geliyor!"
 
     # ------------------------------------------------------------------ #
     #  DUSMAN SALDIRI FAZI                                                #
@@ -449,6 +466,11 @@ class DnDGame:
             # Basarili savunma: dusman saldirisi engellendi, hasar 0
             self._enemy_attack_damage = 0
             print(f"[>] Dusman saldiri fazi basladi! SAVUNMA ENGELLEDI - Hasar: 0")
+        elif self._defense_partial:
+            # Kismi savunma: hasar %50 azaltildi
+            full_dmg = random.randint(8, 22)
+            self._enemy_attack_damage = full_dmg // 2
+            print(f"[>] Dusman saldiri fazi basladi! KISMI SAVUNMA - Hasar: {self._enemy_attack_damage} (tam: {full_dmg})")
         else:
             self._enemy_attack_damage = random.randint(8, 22)
             print(f"[>] Dusman saldiri fazi basladi! Hasar: {self._enemy_attack_damage}")
@@ -511,12 +533,19 @@ class DnDGame:
                     "Mukemmel savunma! Dusman saldirisi engellendi! "
                     "Simdi senin siran!"
                 )
+            elif self._defense_partial:
+                self.state.current_feedback = (
+                    f"Kismi savunma! Hasar azaltildi: -{self._enemy_attack_damage} HP. "
+                    f"Simdi senin siran!"
+                )
             else:
                 self.state.current_feedback = (
                     f"Dusman saldirdi! -{self._enemy_attack_damage} HP. "
                     f"Simdi senin siran!"
                 )
-            self._defense_blocked = False  # Bayragi sifirla
+            # Bayraklari sifirla
+            self._defense_blocked = False
+            self._defense_partial = False
             print(f"[>] Sira oyuncuya gecti. HP: {self.state.character.hp}")
 
     # ------------------------------------------------------------------ #
