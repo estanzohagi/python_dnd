@@ -49,17 +49,17 @@ class GameUI:
     FONT = cv2.FONT_HERSHEY_SIMPLEX
     FONT_BOLD = cv2.FONT_HERSHEY_DUPLEX
 
-    # Buyutulmus font olcekleri (uzaktan okunabilirlik)
-    FONT_SCALE_TITLE = 1.2
-    FONT_SCALE_STORY = 0.7
-    FONT_SCALE_BTN = 0.65
-    FONT_SCALE_BTN_LABEL = 0.5
-    FONT_SCALE_HUD = 0.75
-    FONT_SCALE_HP = 0.65
-    FONT_SCALE_LOADING = 1.2
-    FONT_SCALE_GAMEOVER = 1.5
+    # Buyutulmus font olcekleri (uzaktan okunabilirlik) - %15-20 arttirildi
+    FONT_SCALE_TITLE = 1.4
+    FONT_SCALE_STORY = 0.8
+    FONT_SCALE_BTN = 0.75
+    FONT_SCALE_BTN_LABEL = 0.55
+    FONT_SCALE_HUD = 0.85
+    FONT_SCALE_HP = 0.75
+    FONT_SCALE_LOADING = 1.4
+    FONT_SCALE_GAMEOVER = 1.7
     FONT_THICKNESS = 2
-    FONT_THICKNESS_THIN = 1
+    FONT_THICKNESS_THIN = 2
 
     # Buton etiketleri
     BUTTON_LABELS = {
@@ -75,11 +75,20 @@ class GameUI:
         self.mid_x = frame_width // 2
         self.mid_y = frame_height // 2
 
-        # ---- Buyuk kare butonlar (2x2 grid, ekranin alt yarisi) ----
+        # ---- Layout: Hikaye -> HUD -> Butonlar (cakismaz) ----
         margin = 12
         gap = 10
-        # Butonlar ekranin alt %55'ini kaplar
-        btn_area_top = int(self.h * 0.45)
+
+        # Hikaye alani (ust %33)
+        self.story_top = 55
+        self.story_bottom = int(self.h * 0.33)
+
+        # HUD bandi (hikaye ile butonlar arasi)
+        self.hud_y = self.story_bottom + 8
+        self.hud_height = 30
+
+        # Butonlar (HUD'un altindan ekranin altina kadar)
+        btn_area_top = self.hud_y + self.hud_height + 10
         btn_area_bottom = self.h - margin
 
         available_w = self.w - margin * 2 - gap
@@ -99,10 +108,6 @@ class GameUI:
             "sol_alt": (left_x, bottom_y, left_x + btn_w, bottom_y + btn_h),
             "sag_alt": (right_x, bottom_y, right_x + btn_w, bottom_y + btn_h),
         }
-
-        # Hikaye alani
-        self.story_top = 55
-        self.story_bottom = btn_area_top - 15
 
     def draw_overlay(self, frame: np.ndarray, alpha: float = 0.4) -> np.ndarray:
         """Yari-seffaf koyu overlay cizer."""
@@ -124,7 +129,7 @@ class GameUI:
 
         # Hikaye metni - satir kaydirma
         max_width = self.w - 50
-        line_height = 28
+        line_height = 32
         lines = self._wrap_text(story, self.FONT, self.FONT_SCALE_STORY,
                                 self.FONT_THICKNESS_THIN, max_width)
 
@@ -221,23 +226,31 @@ class GameUI:
 
     def draw_hud(self, frame: np.ndarray, hp: int, max_hp: int,
                  gold: int, turn: int, location: str) -> np.ndarray:
-        """Buyuk HUD (HP bar, altin, tur) cizer - ekranin ust sol kosesi."""
-        # HP Bar - buyuk ve belirgin
+        """HUD bandi (HP bar, altin, tur) - hikaye ile butonlar arasinda."""
+        # HUD arka plan bandi
+        hud_bg_y1 = self.hud_y - 4
+        hud_bg_y2 = self.hud_y + self.hud_height + 4
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (8, hud_bg_y1), (self.w - 8, hud_bg_y2),
+                      (15, 15, 15), -1)
+        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+        cv2.rectangle(frame, (8, hud_bg_y1), (self.w - 8, hud_bg_y2),
+                      self.COLOR_BORDER, 1)
+
+        # HP Bar
         bar_x = 15
-        bar_y = self.story_bottom + 2
-        bar_w = 280
-        bar_h = 24
+        bar_y = self.hud_y
+        bar_w = 260
+        bar_h = self.hud_height
         hp_ratio = max(0, hp / max_hp)
 
-        # HP bar arka plan
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h),
                       self.COLOR_HP_BAR_BG, -1)
 
-        # HP bar dolum
         if hp_ratio > 0.5:
             fill_color = self.COLOR_HP_BAR_HIGH
         elif hp_ratio > 0.25:
-            fill_color = (30, 180, 230)  # turuncu-sari
+            fill_color = (30, 180, 230)
         else:
             fill_color = self.COLOR_HP_BAR_LOW
         cv2.rectangle(frame, (bar_x, bar_y),
@@ -256,10 +269,15 @@ class GameUI:
                     self.FONT_SCALE_HP, self.COLOR_TEXT_WHITE, 2, cv2.LINE_AA)
 
         # Altin ve Tur bilgisi (HP barin saginda)
-        info_x = bar_x + bar_w + 20
-        info_text = f"Altin: {gold}  |  Tur: {turn}"
-        cv2.putText(frame, info_text, (info_x, bar_y + bar_h - 4),
-                    self.FONT, self.FONT_SCALE_HUD, self.COLOR_TEXT_GOLD,
+        info_x = bar_x + bar_w + 15
+        gold_text = f"Altin: {gold}"
+        turn_text = f"Tur: {turn}"
+        cv2.putText(frame, gold_text, (info_x, bar_y + bar_h // 2 + 2),
+                    self.FONT_BOLD, self.FONT_SCALE_HUD, self.COLOR_TEXT_GOLD,
+                    self.FONT_THICKNESS, cv2.LINE_AA)
+        (gw, _), _ = cv2.getTextSize(gold_text, self.FONT_BOLD, self.FONT_SCALE_HUD, self.FONT_THICKNESS)
+        cv2.putText(frame, turn_text, (info_x + gw + 20, bar_y + bar_h // 2 + 2),
+                    self.FONT, self.FONT_SCALE_HUD, self.COLOR_TEXT_WHITE,
                     self.FONT_THICKNESS, cv2.LINE_AA)
 
         return frame
@@ -353,9 +371,9 @@ class GameUI:
         lines = self._wrap_text(text, self.FONT, self.FONT_SCALE_BTN,
                                 self.FONT_THICKNESS_THIN, max_w)
 
-        line_height = 26
+        line_height = 30
         total_h = len(lines) * line_height
-        start_y = y + (btn_h - total_h) // 2 + 18
+        start_y = y + (btn_h - total_h) // 2 + 20
 
         for i, line in enumerate(lines):
             # Yatay ortalama

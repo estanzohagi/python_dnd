@@ -90,6 +90,10 @@ class GameState:
         self.current_theme: str = ""
         self.current_feedback: str = ""
 
+        # ----- AI Tarafından Yönetilen Mod -----
+        self.current_mode: str = "kesif"  # "kesif" | "savas" | "diyalog"
+        self.pending_combat_result: Optional[Dict[str, Any]] = None
+
         # ----- AI Mesaj Geçmişi (Memory) -----
         self._message_history: List[Dict[str, str]] = []
         self._init_system_prompt()
@@ -106,6 +110,9 @@ class GameState:
         {
             "hikaye_metni": "...",
             "feedback": "...",
+            "mod": "kesif|savas|diyalog",
+            "hp_degisim": 0,
+            "altin_degisim": 0,
             "secenekler": {
                 "sol_ust": "...",
                 "sag_ust": "...",
@@ -120,6 +127,11 @@ class GameState:
         self.current_story = ai_response.get("hikaye_metni", "Hikaye alınamadı...")
         self.current_feedback = ai_response.get("feedback", "")
 
+        # ----- Mod guncelleme (AI oyun akisini yonetiyor) -----
+        new_mode = ai_response.get("mod", "kesif")
+        if new_mode in ("kesif", "savas", "diyalog"):
+            self.current_mode = new_mode
+
         secenekler = ai_response.get("secenekler", {})
         self.current_options = {
             "sol_ust": secenekler.get("sol_ust", "..."),
@@ -130,7 +142,16 @@ class GameState:
 
         self.turn_count += 1
 
-        # HP kontrolünden sonra hikaye metni içindeki ipuçlarını işle
+        # ----- HP ve Altin degisimi (explicit JSON alanlari) -----
+        hp_change = ai_response.get("hp_degisim", 0)
+        if isinstance(hp_change, (int, float)) and hp_change != 0:
+            self.modify_hp(int(hp_change))
+
+        gold_change = ai_response.get("altin_degisim", 0)
+        if isinstance(gold_change, (int, float)) and gold_change != 0:
+            self.modify_gold(int(gold_change))
+
+        # Yedek: hikaye metni icindeki tag'lerden de oku
         self._parse_hp_changes(ai_response)
 
         # Oyun bitti mi kontrol et
@@ -162,15 +183,27 @@ class GameState:
             short_story = self.current_story[:100] + "..." if len(self.current_story) > 100 else self.current_story
             prompt += f"SON ADIMDA ANLATILAN: '{short_story}'. SAKIN AYNI SEYLERI TEKRAR ETME, HIKAYEYI ILERLET.\n"
 
-        cycle = self.turn_count % 8
-        if cycle < 4:
-            prompt += "Kesfe devam. Gidisat bir onceki adimla baglantili olsun, yeni ve temaya uygun bir yere ilerleyelim. "
-        elif cycle == 4:
-            prompt += "KARSIMA TEMA ILE UYUMLU BIR BOSS CIKAR! Boss savasi basliyor. "
-        elif cycle in [5, 6]:
-            prompt += "Boss savasi devam ediyor. Temaya uygun tehlikeli saldirilar yap. "
-        elif cycle == 7:
-            prompt += "Boss'u yeniyoruz veya kaciyoruz! Savasi sonlandir ve odul ver. "
+        # ----- Savas sonucu bilgisi -----
+        if self.pending_combat_result:
+            acc = self.pending_combat_result.get("accuracy", 0)
+            action = self.pending_combat_result.get("action", "")
+            if acc >= 70:
+                prompt += f"ONEMLI: Oyuncu '{action}' hamlesini %{acc:.0f} dogrulukla BASARIYLA gerceklestirdi. Hamle tam etkili olsun. "
+            elif acc >= 40:
+                prompt += f"ONEMLI: Oyuncu '{action}' hamlesini %{acc:.0f} dogrulukla KISMI BASARIYLA gerceklestirdi. Hamle yarim etkili olsun. "
+            else:
+                prompt += f"ONEMLI: Oyuncu '{action}' hamlesini %{acc:.0f} dogrulukla BASARISIZ gerceklestirdi. Hamle iska gecsin veya cok az etkili olsun. "
+            self.pending_combat_result = None
+        else:
+            cycle = self.turn_count % 8
+            if cycle < 4:
+                prompt += "Kesfe devam. Gidisat bir onceki adimla baglantili olsun, yeni ve temaya uygun bir yere ilerleyelim. "
+            elif cycle == 4:
+                prompt += "KARSIMA TEMA ILE UYUMLU BIR BOSS CIKAR! Boss savasi basliyor. mod'u 'savas' yap. "
+            elif cycle in [5, 6]:
+                prompt += "Boss savasi devam ediyor. Temaya uygun tehlikeli saldirilar yap. mod'u 'savas' yap. "
+            elif cycle == 7:
+                prompt += "Boss'u yeniyoruz veya kaciyoruz! Savasi sonlandir ve odul ver. mod'u 'kesif' yap. "
             
         prompt += "\n" + self.get_character_summary()
         return prompt
@@ -275,10 +308,19 @@ class GameState:
             "KRITIK KURALLAR:\n"
             "1. YALNIZCA JSON formatinda cevap ver. Asla on soz veya aciklama yazma.\n"
             "2. Turkce ozel karakter (s, c, g, i, o, u) KESINLIKLE KULLANMA. Hep ASCII kullan.\n"
-            "3. Yanit yapisi (feedback kismina oyuncunun son eyleminin sonucunu yaz): \n"
-            '{"hikaye_metni": "...", "feedback": "...", "secenekler": {"sol_ust": "...", "sag_ust": "...", "sol_alt": "...", "sag_alt": "..."}}\n'
-            "4. Hikaye 3 cumleyi, secenekler 5 kelimeyi gecmesin. Feedback kismi kisa bir aciklama olsun (ornegin 'Canin 10 azaldi.').\n"
-            "5. Hikaye metninde HP/Altin/Esya degisimlerini [HP:-10], [ALTIN:+5], [ESYA:Kilic] formatinda belirt."
+            "3. Yanit yapisi:\n"
+            '{"hikaye_metni": "...", "feedback": "...", "mod": "kesif", "hp_degisim": 0, "altin_degisim": 0, '
+            '"secenekler": {"sol_ust": "...", "sag_ust": "...", "sol_alt": "...", "sag_alt": "..."}}\n'
+            "4. Hikaye 3 cumleyi, secenekler 5 kelimeyi gecmesin.\n"
+            "5. MOD ALANI (ZORUNLU):\n"
+            "   - 'kesif': Normal kesif. 4 farkli secenek sun.\n"
+            "   - 'savas': Dusman ile mucadele. Secenekler KESINLIKLE: sol_ust='Saldir', sag_ust='Savun', sol_alt='Kac', sag_alt='Buyu' olsun.\n"
+            "   - 'diyalog': NPC konusmasi. 4 diyalog secenegi sun.\n"
+            "6. hp_degisim: HP degisimi (negatif=hasar, pozitif=iyilesme). Savas disinda genelde 0.\n"
+            "7. altin_degisim: Altin degisimi. Odul/harcama durumunda kullan.\n"
+            "8. feedback: Oyuncunun son eyleminin kisa sonucu (ornegin 'Canin 10 azaldi.' veya '15 altin kazandin.').\n"
+            "9. Oyunu dinamik yonet: bazi turlarda savas, bazi turlarda kesif, bazi turlarda diyalog olsun. Monoton olma.\n"
+            "10. hp_degisim ve altin_degisim DAIMA sayi olmali (0, -10, +20 gibi). Bos birakma."
         )
 
         self._message_history.append({
