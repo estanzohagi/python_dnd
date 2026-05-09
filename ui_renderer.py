@@ -382,6 +382,97 @@ class GameUI:
                     self.FONT_SCALE_LOADING, self.COLOR_TEXT_GOLD, 2, cv2.LINE_AA)
         return frame
 
+    def draw_enemy_attack(self, frame: np.ndarray, progress: float,
+                          damage: int, enemy_name: str = "Dusman",
+                          blocked: bool = False) -> np.ndarray:
+        """Dusman saldiri animasyon ekrani (3 saniye). blocked=True ise savunma basarili."""
+        if blocked:
+            # SAVUNMA BASARILI - mavi/yesil kalkan efekti
+            pulse = abs(((progress * 6) % 2) - 1)
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (self.w, self.h),
+                          (int(120 + 40 * pulse), int(80 + 30 * pulse), 20), -1)
+            frame = cv2.addWeighted(overlay, 0.5, frame, 0.5, 0)
+
+            # Mavi kenar
+            border = int(6 + 10 * pulse)
+            cv2.rectangle(frame, (0, 0), (self.w, self.h), (255, 180, 50), border)
+
+            # Kalkan dairesi
+            radius = int(self.w * 0.05 + progress * self.w * 0.25)
+            cv2.circle(frame, (self.w // 2, self.h // 2), radius, (255, 200, 80), 8)
+
+            # Baslik
+            title = "MUKEMMEL SAVUNMA!"
+            (tw, _), _ = cv2.getTextSize(title, self.FONT_BOLD, 1.3, 3)
+            cv2.putText(frame, title, ((self.w - tw) // 2, self.h // 2 - 60),
+                        self.FONT_BOLD, 1.3, (50, 255, 100), 3, cv2.LINE_AA)
+
+            # Engellendi bilgisi
+            block_text = "Saldiri Engellendi!"
+            (tw2, _), _ = cv2.getTextSize(block_text, self.FONT_BOLD, 1.2, 2)
+            cv2.putText(frame, block_text, ((self.w - tw2) // 2, self.h // 2 + 20),
+                        self.FONT_BOLD, 1.2, (255, 255, 255), 2, cv2.LINE_AA)
+        else:
+            # Normal dusman saldirisi - kirmizi overlay
+            pulse = abs(((progress * 6) % 2) - 1)
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (0, 0), (self.w, self.h),
+                          (0, 0, int(60 + 80 * pulse)), -1)
+            frame = cv2.addWeighted(overlay, 0.6, frame, 0.4, 0)
+
+            # Kirmizi kenar parlamasi
+            border = int(8 + 12 * pulse)
+            cv2.rectangle(frame, (0, 0), (self.w, self.h), (0, 0, 220), border)
+
+            # Baslik
+            title = f"{sanitize_text(enemy_name)} SALDIRIYOR!"
+            (tw, _), _ = cv2.getTextSize(title, self.FONT_BOLD, 1.3, 3)
+            cv2.putText(frame, title, ((self.w - tw) // 2, self.h // 2 - 60),
+                        self.FONT_BOLD, 1.3, (50, 50, 255), 3, cv2.LINE_AA)
+
+            # Hasar bilgisi
+            dmg_text = f"-{damage} HP"
+            (tw2, _), _ = cv2.getTextSize(dmg_text, self.FONT_BOLD, 1.8, 3)
+            y_offset = int(20 * (1 - progress))
+            cv2.putText(frame, dmg_text, ((self.w - tw2) // 2, self.h // 2 + 20 + y_offset),
+                        self.FONT_BOLD, 1.8, (0, 0, 255), 3, cv2.LINE_AA)
+
+        # Progress bar (zamanlayici)
+        bar_x, bar_y = 60, self.h // 2 + 80
+        bar_w, bar_h = self.w - 120, 12
+        fill_w = int(bar_w * progress)
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h),
+                      (40, 40, 40), -1)
+        bar_color = (255, 180, 50) if blocked else (50, 50, 220)
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h),
+                      bar_color, -1)
+        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h),
+                      (120, 120, 120), 1)
+
+        # Alt bilgi
+        hint = "Savunma basarili!" if blocked else "Hazirlan! Sira sana gelecek..."
+        (tw3, _), _ = cv2.getTextSize(hint, self.FONT, 0.7, 1)
+        cv2.putText(frame, hint, ((self.w - tw3) // 2, self.h // 2 + 120),
+                    self.FONT, 0.7, (180, 180, 180), 1, cv2.LINE_AA)
+
+        return frame
+
+    def draw_critical_hit(self, frame: np.ndarray, damage: int) -> np.ndarray:
+        """Kritik vurus animasyonu icin overlay."""
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (self.w, self.h), (0, 100, 255), -1)
+        frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
+        title = "KRITIK VURUS!"
+        (tw, _), _ = cv2.getTextSize(title, self.FONT_BOLD, 1.5, 3)
+        cv2.putText(frame, title, ((self.w - tw) // 2, self.h // 2 - 30),
+                    self.FONT_BOLD, 1.5, (0, 0, 255), 3, cv2.LINE_AA)
+        dmg_text = f"-{damage} HP!"
+        (tw2, _), _ = cv2.getTextSize(dmg_text, self.FONT_BOLD, 2.0, 3)
+        cv2.putText(frame, dmg_text, ((self.w - tw2) // 2, self.h // 2 + 40),
+                    self.FONT_BOLD, 2.0, (50, 215, 255), 3, cv2.LINE_AA)
+        return frame
+
     def draw_game_over(self, frame: np.ndarray, reason: str) -> np.ndarray:
         """Oyun sonu ekrani cizer."""
         reason = sanitize_text(reason)

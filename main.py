@@ -3,9 +3,15 @@ main.py - Ana Oyun Döngüsü
 ============================
 Tüm modülleri senkronize ederek oyunu çalıştırır.
 Geometrik şekil çizme savaş sistemi entegre edilmiştir.
+
+Savaş Mekanigi (Turn-Based):
+  1. Oyuncunun sırası -> challenge (şekil/yumruk)
+  2. Düşmanın sırası -> 3sn saldırı animasyonu + hasar
+  3. Tekrar oyuncunun sırası (veya extra turn)
 """
 
 import sys
+import time
 import random
 import cv2
 import numpy as np
@@ -27,9 +33,19 @@ class DnDGame:
     PHASE_NORMAL = "normal"
     PHASE_SHAPE_CHALLENGE = "shape_challenge"
     PHASE_FIST_CHALLENGE = "fist_challenge"
+    PHASE_ENEMY_ATTACK = "enemy_attack"
 
     SHAPE_TYPES = [ShapeType.TRIANGLE, ShapeType.SQUARE, ShapeType.CIRCLE,
                    ShapeType.RECTANGLE, ShapeType.INFINITY]
+
+    # Dusman saldiri suresi (saniye)
+    ENEMY_ATTACK_DURATION = 3.0
+
+    # Kritik vurus esigi (sekil challenge %85+)
+    CRITICAL_HIT_THRESHOLD = 85
+
+    # Basarili saldiri sonrasi ekstra tur sansi (%30)
+    EXTRA_TURN_CHANCE = 0.30
 
     def __init__(self):
         # ----- Modülleri Başlat -----
@@ -54,6 +70,17 @@ class DnDGame:
         # ----- Oyun Fazı -----
         self.current_phase = self.PHASE_NORMAL
         self._pending_combat_choice = ""
+
+        # ----- Dusman Saldiri Fazi -----
+        self._enemy_attack_start: float = 0.0
+        self._enemy_attack_damage: int = 0
+        self._enemy_attack_applied: bool = False
+
+        # ----- Ekstra Tur (saldiri sonrasi) -----
+        self._extra_turn_active: bool = False
+
+        # ----- Basarili savunma bayraği -----
+        self._defense_blocked: bool = False
 
         # ----- Acilis: Karakter Olusturma -----
         print("[*] Karakter olusturma bekleniyor...")
@@ -106,6 +133,13 @@ class DnDGame:
                 # 4b) Yumruk challenge aktif mi?
                 if self.current_phase == self.PHASE_FIST_CHALLENGE:
                     self._handle_fist_challenge(frame)
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+                    continue
+
+                # 4c) Dusman saldiri fazi aktif mi?
+                if self.current_phase == self.PHASE_ENEMY_ATTACK:
+                    self._handle_enemy_attack(frame)
                     if cv2.waitKey(1) & 0xFF == ord("q"):
                         break
                     continue
@@ -264,9 +298,233 @@ class DnDGame:
             self.current_phase = self.PHASE_FIST_CHALLENGE
             print(f"[>] Yumruk challenge basladi - {choice_text}")
 
+    # ------------------------------------------------------------------ #
+    #  SIRAS TABANLI SAVAS MEKANIGI                                       #
+    # ------------------------------------------------------------------ #
+
+    def _process_player_combat_result(self, accuracy: float, action: str,
+                                       is_shape: bool = True) -> None:
+        """
+        Oyuncunun challenge sonucunu isler (yeni turn-based mantik).
+
+        Kurallar:
+          - Saldiri/Buyu:
+              %85+ (sekil) = KRITIK VURUS (1.5x hasar)
+              %70+ = basarili (normal hasar)
+              %40+ = kismi (az hasar + oyuncu az hasar alir)
+              <%40 = basarisiz (oyuncu hasar alir)
+            Basarili saldiri sonrasi %30 ekstra tur sansi
+          - Savunma:
+              %70+ = basarili -> can yenilenir
+              %40+ = kismi -> az hasar
+              <%40 = basarisiz -> normal hasar
+          - Kac:
+              %70+ = basarili kacis
+              <%70 = basarisiz, hasar alir
+        """
+        action_lower = action.lower()
+        is_attack = action_lower in ("saldir", "saldiri", "buyu")
+        is_defense = action_lower in ("savun", "savunma")
+        is_flee = action_lower in ("kac", "kacis")
+
+        grant_extra_turn = False
+
+        if is_attack:
+            self._process_attack(accuracy, action, is_shape)
+            # Basarili saldiri -> ekstra tur sansi
+            if accuracy >= 70 and random.random() < self.EXTRA_TURN_CHANCE:
+                grant_extra_turn = True
+
+        elif is_defense:
+            self._process_defense(accuracy)
+
+        elif is_flee:
+            self._process_flee(accuracy)
+
+        print(f"[!] HP: {self.state.character.hp} | Dusman HP: {self.state.enemy_hp}")
+
+        # HP 0 kontrolu
+        if self.state.character.hp <= 0:
+            self.state.is_game_over = True
+            self.state.game_over_reason = "Savas sirasinda yenildin!"
+            self.current_phase = self.PHASE_NORMAL
+            self.shape_challenge.reset()
+            self.fist_challenge.reset()
+            return
+
+        # Dusman yenildiyse -> AI'a bildir
+        if self.state.enemy_hp <= 0:
+            self._send_combat_result(accuracy, action)
+            self.shape_challenge.reset()
+            self.fist_challenge.reset()
+            return
+
+        # Kacis basariliysa -> AI'a bildir
+        if is_flee and accuracy >= 70:
+            self._send_combat_result(accuracy, action)
+            self.shape_challenge.reset()
+            self.fist_challenge.reset()
+            return
+
+        # Ekstra tur kontrolu
+        if grant_extra_turn:
+            self._extra_turn_active = True
+            self.state.current_feedback += " | EKSTRA TUR!"
+            print("[!] EKSTRA TUR kazanildi!")
+            # Direkt oyuncunun sirasina don (dusman saldiramaz)
+            self.current_phase = self.PHASE_NORMAL
+            self.shape_challenge.reset()
+            self.fist_challenge.reset()
+            return
+
+        # Normal akis: dusman saldiri fazina gec
+        self._start_enemy_attack()
+        self.shape_challenge.reset()
+        self.fist_challenge.reset()
+
+    def _process_attack(self, accuracy: float, action: str,
+                        is_shape: bool) -> None:
+        """Saldiri/Buyu sonucunu isler."""
+        if is_shape and accuracy >= self.CRITICAL_HIT_THRESHOLD:
+            # KRITIK VURUS! (%85+ sadece sekil challenge)
+            base_dmg = random.randint(30, 50)
+            enemy_dmg = int(base_dmg * 1.5)
+            self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
+            self.state.current_feedback = f"KRITIK VURUS! Dusmana -{enemy_dmg} hasar!"
+            print(f"[!!] KRITIK VURUS! Dusmana -{enemy_dmg}")
+        elif accuracy >= 70:
+            # Basarili saldiri
+            enemy_dmg = random.randint(25, 40)
+            self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
+            self.state.current_feedback = f"Basarili {action}! Dusmana -{enemy_dmg} hasar!"
+        elif accuracy >= 40:
+            # Kismi basari: az hasar ver, az hasar al
+            enemy_dmg = random.randint(10, 20)
+            player_dmg = random.randint(3, 8)
+            self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
+            self.state.modify_hp(-player_dmg)
+            self.state.current_feedback = f"Kismi basari! -{player_dmg} HP, dusmana -{enemy_dmg}"
+        else:
+            # Basarisiz: oyuncu hasar alir
+            player_dmg = random.randint(10, 20)
+            self.state.modify_hp(-player_dmg)
+            self.state.current_feedback = f"Basarisiz {action}! -{player_dmg} HP"
+
+    def _process_defense(self, accuracy: float) -> None:
+        """Savunma sonucunu isler."""
+        if accuracy >= 70:
+            # Basarili savunma: CAN YENILENIR + dusman saldirisi engellenir
+            heal = random.randint(8, 20)
+            self.state.modify_hp(heal)
+            self.state.current_feedback = f"Mukemmel savunma! +{heal} HP yenilendi!"
+            self._defense_blocked = True
+            print(f"[+] Savunma basarili! +{heal} HP (dusman saldirisi engellenecek)")
+        elif accuracy >= 40:
+            # Kismi savunma: az hasar
+            damage = random.randint(3, 8)
+            self.state.modify_hp(-damage)
+            self.state.current_feedback = f"Zayif savunma! -{damage} HP"
+        else:
+            # Basarisiz savunma: normal hasar
+            damage = random.randint(10, 20)
+            self.state.modify_hp(-damage)
+            self.state.current_feedback = f"Savunma basarisiz! -{damage} HP"
+
+    def _process_flee(self, accuracy: float) -> None:
+        """Kacis sonucunu isler."""
+        if accuracy >= 70:
+            self.state.current_feedback = "Basariyla kactin!"
+        else:
+            damage = random.randint(8, 18)
+            self.state.modify_hp(-damage)
+            self.state.current_feedback = f"Kacilamadi! -{damage} HP"
+
+    # ------------------------------------------------------------------ #
+    #  DUSMAN SALDIRI FAZI                                                #
+    # ------------------------------------------------------------------ #
+
+    def _start_enemy_attack(self) -> None:
+        """Dusman saldiri fazini baslatir (3 saniye animasyon)."""
+        if self._defense_blocked:
+            # Basarili savunma: dusman saldirisi engellendi, hasar 0
+            self._enemy_attack_damage = 0
+            print(f"[>] Dusman saldiri fazi basladi! SAVUNMA ENGELLEDI - Hasar: 0")
+        else:
+            self._enemy_attack_damage = random.randint(8, 22)
+            print(f"[>] Dusman saldiri fazi basladi! Hasar: {self._enemy_attack_damage}")
+        self._enemy_attack_start = time.time()
+        self._enemy_attack_applied = False
+        self.current_phase = self.PHASE_ENEMY_ATTACK
+
+    def _handle_enemy_attack(self, frame: np.ndarray) -> None:
+        """Dusman saldiri animasyonunu yonetir."""
+        now = time.time()
+        elapsed = now - self._enemy_attack_start
+        progress = min(elapsed / self.ENEMY_ATTACK_DURATION, 1.0)
+
+        # Hasar animasyonun ortasinda uygulanir (1.5sn'de)
+        if elapsed >= self.ENEMY_ATTACK_DURATION * 0.5 and not self._enemy_attack_applied:
+            if self._defense_blocked:
+                # Savunma basarili: hasar yok
+                print(f"[!] Dusman saldirdi ama SAVUNMA ENGELLEDI! Hasar: 0")
+            else:
+                self.state.modify_hp(-self._enemy_attack_damage)
+                print(f"[!] Dusman saldirdi! -{self._enemy_attack_damage} HP "
+                      f"(kalan: {self.state.character.hp})")
+            self._enemy_attack_applied = True
+
+        # Animasyon ekranini ciz
+        if self._defense_blocked:
+            frame = self.ui.draw_enemy_attack(frame, progress,
+                                               0, "Dusman",
+                                               blocked=True)
+        else:
+            frame = self.ui.draw_enemy_attack(frame, progress,
+                                               self._enemy_attack_damage,
+                                               "Dusman")
+
+        # HUD'u da goster (HP degisimini gormek icin)
+        frame = self.ui.draw_hud(frame, self.state.character.hp,
+                                  self.state.character.max_hp,
+                                  self.state.character.gold,
+                                  self.state.turn_count,
+                                  self.state.current_location,
+                                  self.state.current_mode,
+                                  self.state.enemy_hp,
+                                  self.state.enemy_max_hp)
+
+        cv2.imshow(self.WINDOW_NAME, frame)
+
+        # Animasyon bitti mi?
+        if progress >= 1.0:
+            # HP kontrolu
+            if self.state.character.hp <= 0:
+                self.state.is_game_over = True
+                self.state.game_over_reason = "Dusman saldirisiyla yenildin!"
+                self.current_phase = self.PHASE_NORMAL
+                return
+
+            # Sira tekrar oyuncuya geciyor
+            self.current_phase = self.PHASE_NORMAL
+            if self._defense_blocked:
+                self.state.current_feedback = (
+                    "Mukemmel savunma! Dusman saldirisi engellendi! "
+                    "Simdi senin siran!"
+                )
+            else:
+                self.state.current_feedback = (
+                    f"Dusman saldirdi! -{self._enemy_attack_damage} HP. "
+                    f"Simdi senin siran!"
+                )
+            self._defense_blocked = False  # Bayragi sifirla
+            print(f"[>] Sira oyuncuya gecti. HP: {self.state.character.hp}")
+
+    # ------------------------------------------------------------------ #
+    #  CHALLENGE HANDLER'LAR                                               #
+    # ------------------------------------------------------------------ #
+
     def _handle_shape_challenge(self, frame: np.ndarray) -> None:
         """Sekil cizme mini oyunu fazini yonetir."""
-
         finger_pos = self.tracker.detect_finger(frame)
         result = self.shape_challenge.update(finger_pos)
 
@@ -286,57 +544,10 @@ class DnDGame:
         if self.shape_challenge.is_done():
             accuracy, action = self.shape_challenge.get_result()
             print(f"[>] Sekil sonucu: %{accuracy:.0f} dogruluk - {action}")
-
-            action_lower = action.lower()
-            is_attack = action_lower in ("saldir", "saldiri", "buyu")
-            is_defense = action_lower in ("savun", "savunma")
-            is_flee = action_lower in ("kac", "kacis")
-
-            # ----- Oyuncu HP degisimi (sadece basarisiz/kismi) -----
-            if accuracy >= 70:
-                # Basarili hamle: oyuncu hasar ALMAZ
-                if is_attack:
-                    enemy_dmg = random.randint(25, 40)
-                    self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
-                    self.state.current_feedback = f"Basarili! Dusmana -{enemy_dmg} hasar!"
-                elif is_defense:
-                    self.state.current_feedback = "Mukemmel savunma! Hasar engellendi."
-                elif is_flee:
-                    self.state.current_feedback = "Basariyla kactin!"
-            elif accuracy >= 40:
-                # Kismi basari: az hasar al
-                damage = random.randint(3, 10)
-                self.state.modify_hp(-damage)
-                if is_attack:
-                    enemy_dmg = random.randint(10, 20)
-                    self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
-                    self.state.current_feedback = f"Kismi basari! -{damage} HP, dusmana -{enemy_dmg}"
-                elif is_defense:
-                    self.state.current_feedback = f"Zayif savunma! -{damage} HP"
-                else:
-                    self.state.current_feedback = f"Kismi basari! -{damage} HP"
-            else:
-                # Basarisiz: cok hasar al, dusmana hasar yok
-                damage = random.randint(10, 25)
-                self.state.modify_hp(-damage)
-                self.state.current_feedback = f"Basarisiz! -{damage} HP"
-
-            print(f"[!] HP: {self.state.character.hp} | Dusman HP: {self.state.enemy_hp}")
-
-            # HP 0'a dustuyse oyun bitsin
-            if self.state.character.hp <= 0:
-                self.state.is_game_over = True
-                self.state.game_over_reason = "Savas sirasinda yenildin!"
-                self.current_phase = self.PHASE_NORMAL
-                self.shape_challenge.reset()
-                return
-
-            self._send_combat_result(accuracy, action)
-            self.shape_challenge.reset()
+            self._process_player_combat_result(accuracy, action, is_shape=True)
 
     def _handle_fist_challenge(self, frame: np.ndarray) -> None:
         """Yumruk mini oyunu fazini yonetir."""
-
         # Once parmak tespiti yap (detect_fist icin _last_result gerekli)
         self.tracker.detect_finger(frame)
         fist_pos, is_fist = self.tracker.detect_fist(frame)
@@ -362,49 +573,11 @@ class DnDGame:
         if self.fist_challenge.is_done():
             accuracy, action = self.fist_challenge.get_result()
             print(f"[>] Yumruk sonucu: %{accuracy:.0f} dogruluk - {action}")
+            self._process_player_combat_result(accuracy, action, is_shape=False)
 
-            action_lower = action.lower()
-            is_attack = action_lower in ("saldir", "saldiri", "buyu")
-            is_defense = action_lower in ("savun", "savunma")
-            is_flee = action_lower in ("kac", "kacis")
-
-            # HP degisimi (ayni mantik)
-            if accuracy >= 70:
-                if is_attack:
-                    enemy_dmg = random.randint(25, 40)
-                    self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
-                    self.state.current_feedback = f"Basarili! Dusmana -{enemy_dmg} hasar!"
-                elif is_defense:
-                    self.state.current_feedback = "Mukemmel savunma! Hasar engellendi."
-                elif is_flee:
-                    self.state.current_feedback = "Basariyla kactin!"
-            elif accuracy >= 40:
-                damage = random.randint(3, 10)
-                self.state.modify_hp(-damage)
-                if is_attack:
-                    enemy_dmg = random.randint(10, 20)
-                    self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
-                    self.state.current_feedback = f"Kismi basari! -{damage} HP, dusmana -{enemy_dmg}"
-                elif is_defense:
-                    self.state.current_feedback = f"Zayif savunma! -{damage} HP"
-                else:
-                    self.state.current_feedback = f"Kismi basari! -{damage} HP"
-            else:
-                damage = random.randint(10, 25)
-                self.state.modify_hp(-damage)
-                self.state.current_feedback = f"Basarisiz! -{damage} HP"
-
-            print(f"[!] HP: {self.state.character.hp} | Dusman HP: {self.state.enemy_hp}")
-
-            if self.state.character.hp <= 0:
-                self.state.is_game_over = True
-                self.state.game_over_reason = "Savas sirasinda yenildin!"
-                self.current_phase = self.PHASE_NORMAL
-                self.fist_challenge.reset()
-                return
-
-            self._send_combat_result(accuracy, action)
-            self.fist_challenge.reset()
+    # ------------------------------------------------------------------ #
+    #  AI & RESTART                                                       #
+    # ------------------------------------------------------------------ #
 
     def _send_combat_result(self, accuracy: float, action: str) -> None:
         """Savas sonucunu AI'a gonderir."""
@@ -451,6 +624,7 @@ class DnDGame:
         self.current_phase = self.PHASE_NORMAL
         self.shape_challenge.reset()
         self.fist_challenge.reset()
+        self._extra_turn_active = False
 
 
 def main():
