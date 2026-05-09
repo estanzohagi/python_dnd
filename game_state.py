@@ -1,0 +1,369 @@
+"""
+game_state.py - Oyun Durumu Yöneticisi
+========================================
+Karakterin canını (HP), envanterini, mevcut konumunu ve
+AI'a gönderilecek mesaj geçmişini (memory) yönetir.
+Geçmiş çok uzarsa eski mesajları kırpan optimizasyon içerir.
+"""
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+
+@dataclass
+class Character:
+    """
+    Oyuncu karakterinin temel özelliklerini tutar.
+
+    Attributes:
+        name: Karakterin adı.
+        char_class: Karakter sınıfı (Savaşçı, Büyücü, vb.).
+        hp: Mevcut can puanı.
+        max_hp: Maksimum can puanı.
+        inventory: Envanter listesi.
+        gold: Altın miktarı.
+    """
+    name: str = "Kahraman"
+    char_class: str = "Maceraperest"
+    hp: int = 100
+    max_hp: int = 100
+    inventory: List[str] = field(default_factory=lambda: ["Pasli Kilic", "Mesale"])
+    gold: int = 50
+
+
+class GameState:
+    """
+    Oyunun tüm durumunu merkezi olarak yöneten sınıf.
+
+    Bu sınıf karakter bilgilerini, mevcut konumu, hikaye metnini,
+    seçenekleri ve AI ile paylaşılan mesaj geçmişini tutar.
+    Bellek yönetimi için geçmiş otomatik olarak kırpılır.
+
+    Attributes:
+        character (Character): Oyuncu karakteri.
+        current_location (str): Karakterin bulunduğu konum.
+        turn_count (int): Toplam tur sayısı.
+        current_story (str): Ekranda gösterilen mevcut hikaye metni.
+        current_options (dict): Ekrandaki 4 seçenek.
+        is_game_over (bool): Oyun bitip bitmediği.
+        game_over_reason (str): Oyunun bitiş nedeni.
+    """
+
+    # Mesaj geçmişi bu sayıyı aştığında kırpma uygulanır
+    MAX_MEMORY_MESSAGES = 20
+    # Kırpma sonrası bırakılacak mesaj sayısı (sistem mesajı hariç)
+    TRIM_TO_MESSAGES = 12
+
+    THEME_LORE = {
+        "Karanlik Magara": "Kadim bir ejderhanin yillardir uyudugu, duvarlarindan kristal suzulen rutubetli ve devasa bir magara sistemi.",
+        "Gizemli Orman": "Agaclarin fisildadigi, her adimda bitkilerin yer degistirdigi ve sislerin arasinda perilerin goruldugu buyulu bir orman.",
+        "Kaotik Uzay": "Fizik kurallarinin islemedigi, yildiz tozlarinin arasinda devasa gozlerin sizi izledigi boyutsal bir bosluk.",
+        "Ruhlar Cehennemi": "Lav nehirlerinin aktigi, gunahkar ruhlarin cigliklarinin yankilandigi ve zebani lordlarinin hukmettigi bir diyar.",
+        "Sonsuz Col": "Gunesin hic batmadigi, kumlarin altinda devasa solucanlarin dolastigi ve seraplarin insanlari delirttigi bir sahra."
+    }
+
+    def __init__(self, character: Optional[Character] = None):
+        """
+        GameState'i başlatır.
+
+        Args:
+            character: Oyuncu karakteri. Verilmezse varsayılan karakter oluşturulur.
+        """
+        self.character = character or Character()
+        self.current_location: str = "Bilinmeyen Diyar"
+        self.turn_count: int = 0
+
+        # ----- Hikaye ve Seçenekler -----
+        self.current_story: str = "Macera başlamak üzere..."
+        self.current_options: Dict[str, str] = {
+            "sol_ust": "...",
+            "sag_ust": "...",
+            "sol_alt": "...",
+            "sag_alt": "...",
+        }
+
+        # ----- Oyun Durumu Bayrakları -----
+        self.is_game_over: bool = False
+        self.game_over_reason: str = ""
+        self.is_waiting_for_ai: bool = False
+        self.is_theme_selection: bool = True
+        self.current_theme: str = ""
+        self.current_feedback: str = ""
+
+        # ----- AI Mesaj Geçmişi (Memory) -----
+        self._message_history: List[Dict[str, str]] = []
+        self._init_system_prompt()
+
+    # ------------------------------------------------------------------ #
+    #  GENEL (PUBLIC) METODLAR                                            #
+    # ------------------------------------------------------------------ #
+
+    def update_from_ai_response(self, ai_response: Dict[str, Any]) -> None:
+        """
+        AI'dan gelen JSON yanıtına göre oyun durumunu günceller.
+
+        Beklenen format:
+        {
+            "hikaye_metni": "...",
+            "feedback": "...",
+            "secenekler": {
+                "sol_ust": "...",
+                "sag_ust": "...",
+                "sol_alt": "...",
+                "sag_alt": "..."
+            }
+        }
+
+        Args:
+            ai_response: AI'dan gelen ayrıştırılmış JSON sözlüğü.
+        """
+        self.current_story = ai_response.get("hikaye_metni", "Hikaye alınamadı...")
+        self.current_feedback = ai_response.get("feedback", "")
+
+        secenekler = ai_response.get("secenekler", {})
+        self.current_options = {
+            "sol_ust": secenekler.get("sol_ust", "..."),
+            "sag_ust": secenekler.get("sag_ust", "..."),
+            "sol_alt": secenekler.get("sol_alt", "..."),
+            "sag_alt": secenekler.get("sag_alt", "..."),
+        }
+
+        self.turn_count += 1
+
+        # HP kontrolünden sonra hikaye metni içindeki ipuçlarını işle
+        self._parse_hp_changes(ai_response)
+
+        # Oyun bitti mi kontrol et
+        if self.character.hp <= 0:
+            self.is_game_over = True
+            self.game_over_reason = "Karakterin cani tukendi!"
+
+    def add_user_choice(self, user_msg: str) -> None:
+        """
+        Kullanıcının dinamik seçimini mesaj geçmişine ekler.
+        """
+        self._message_history.append({
+            "role": "user",
+            "content": user_msg,
+        })
+        self._optimize_memory()
+
+    def get_dynamic_prompt(self, choice_text: str) -> str:
+        """Boss mantigi ve tema ilerleyisi icin dinamik prompt uretir."""
+        lore = self.THEME_LORE.get(self.current_theme, "Bilinmeyen bir diyar.")
+        prompt = (
+            f"Secimim: {choice_text}. Tema: {self.current_theme}. "
+            f"Tema Arka Plani: {lore}\n"
+            f"Adim No: {self.turn_count + 1}. "
+        )
+        
+        # Tekrari onlemek icin son hikayeyi hatirlat
+        if self.current_story:
+            short_story = self.current_story[:100] + "..." if len(self.current_story) > 100 else self.current_story
+            prompt += f"SON ADIMDA ANLATILAN: '{short_story}'. SAKIN AYNI SEYLERI TEKRAR ETME, HIKAYEYI ILERLET.\n"
+
+        cycle = self.turn_count % 8
+        if cycle < 4:
+            prompt += "Kesfe devam. Gidisat bir onceki adimla baglantili olsun, yeni ve temaya uygun bir yere ilerleyelim. "
+        elif cycle == 4:
+            prompt += "KARSIMA TEMA ILE UYUMLU BIR BOSS CIKAR! Boss savasi basliyor. "
+        elif cycle in [5, 6]:
+            prompt += "Boss savasi devam ediyor. Temaya uygun tehlikeli saldirilar yap. "
+        elif cycle == 7:
+            prompt += "Boss'u yeniyoruz veya kaciyoruz! Savasi sonlandir ve odul ver. "
+            
+        prompt += "\n" + self.get_character_summary()
+        return prompt
+
+    def add_ai_response(self, raw_content: str) -> None:
+        """
+        AI'dan gelen ham yanıtı mesaj geçmişine ekler.
+
+        Args:
+            raw_content: AI'dan gelen ham JSON string.
+        """
+        self._message_history.append({
+            "role": "assistant",
+            "content": raw_content,
+        })
+        self._optimize_memory()
+
+    def get_message_history(self) -> List[Dict[str, str]]:
+        """
+        AI'a gönderilecek tam mesaj geçmişini döndürür.
+
+        Returns:
+            Mesaj sözlüklerinin listesi (role, content).
+        """
+        return list(self._message_history)
+
+    def get_character_summary(self) -> str:
+        """
+        Karakterin mevcut durumunun özet metnini döndürür.
+        AI'a bağlam sağlamak için kullanılır.
+
+        Returns:
+            Karakter durum özeti.
+        """
+        inv_str = ", ".join(self.character.inventory) if self.character.inventory else "Boş"
+        return (
+            f"[Karakter Durumu] "
+            f"Ad: {self.character.name} | "
+            f"Sınıf: {self.character.char_class} | "
+            f"HP: {self.character.hp}/{self.character.max_hp} | "
+            f"Altın: {self.character.gold} | "
+            f"Envanter: {inv_str} | "
+            f"Konum: {self.current_location} | "
+            f"Tur: {self.turn_count}"
+        )
+
+    def modify_hp(self, amount: int) -> None:
+        """
+        Karakterin HP'sini değiştirir. 0 ile max_hp arasında kalmasını sağlar.
+
+        Args:
+            amount: Değişim miktarı (pozitif = iyileşme, negatif = hasar).
+        """
+        self.character.hp = max(0, min(self.character.max_hp, self.character.hp + amount))
+
+    def add_to_inventory(self, item: str) -> None:
+        """
+        Envantere yeni bir eşya ekler.
+
+        Args:
+            item: Eklenecek eşya adı.
+        """
+        if item not in self.character.inventory:
+            self.character.inventory.append(item)
+
+    def remove_from_inventory(self, item: str) -> bool:
+        """
+        Envanterden bir eşya çıkarır.
+
+        Args:
+            item: Çıkarılacak eşya adı.
+
+        Returns:
+            Eşya bulunup çıkarıldıysa True, aksi halde False.
+        """
+        if item in self.character.inventory:
+            self.character.inventory.remove(item)
+            return True
+        return False
+
+    def modify_gold(self, amount: int) -> None:
+        """
+        Altın miktarını değiştirir. Negatife düşmesine izin verilmez.
+
+        Args:
+            amount: Değişim miktarı.
+        """
+        self.character.gold = max(0, self.character.gold + amount)
+
+    def reset(self) -> None:
+        """Oyunu tamamen sıfırlar ve baştan başlatır."""
+        self.__init__(Character())
+
+    # ------------------------------------------------------------------ #
+    #  ÖZEL (PRIVATE) METODLAR                                            #
+    # ------------------------------------------------------------------ #
+
+    def _init_system_prompt(self) -> None:
+        """AI için sistem promptunu oluşturur ve geçmişe ekler."""
+        system_prompt = (
+            "Sen bir Dungeons & Dragons zindancisisin. Turkce hikaye anlat.\n\n"
+            "KRITIK KURALLAR:\n"
+            "1. YALNIZCA JSON formatinda cevap ver. Asla on soz veya aciklama yazma.\n"
+            "2. Turkce ozel karakter (s, c, g, i, o, u) KESINLIKLE KULLANMA. Hep ASCII kullan.\n"
+            "3. Yanit yapisi (feedback kismina oyuncunun son eyleminin sonucunu yaz): \n"
+            '{"hikaye_metni": "...", "feedback": "...", "secenekler": {"sol_ust": "...", "sag_ust": "...", "sol_alt": "...", "sag_alt": "..."}}\n'
+            "4. Hikaye 3 cumleyi, secenekler 5 kelimeyi gecmesin. Feedback kismi kisa bir aciklama olsun (ornegin 'Canin 10 azaldi.').\n"
+            "5. Hikaye metninde HP/Altin/Esya degisimlerini [HP:-10], [ALTIN:+5], [ESYA:Kilic] formatinda belirt."
+        )
+
+        self._message_history.append({
+            "role": "system",
+            "content": system_prompt,
+        })
+
+    def _optimize_memory(self) -> None:
+        """
+        Mesaj geçmişi çok uzarsa eski mesajları kırparak belleği optimize eder.
+
+        Sistem mesajı (index 0) her zaman korunur. Kırpma uygulandığında,
+        silinen mesajların bir özeti oluşturularak bağlam kaybı minimize edilir.
+        """
+        # Sistem mesajı hariç mesaj sayısı
+        non_system_count = len(self._message_history) - 1
+
+        if non_system_count <= self.MAX_MEMORY_MESSAGES:
+            return
+
+        # Sistem mesajını koru
+        system_msg = self._message_history[0]
+
+        # Son TRIM_TO_MESSAGES mesajı koru
+        kept_messages = self._message_history[-self.TRIM_TO_MESSAGES:]
+
+        # Silinen mesajlardan bir özet oluştur
+        trimmed_count = non_system_count - self.TRIM_TO_MESSAGES
+        summary_msg = {
+            "role": "system",
+            "content": (
+                f"[Bellek Özeti: Önceki {trimmed_count} mesaj kırpıldı. "
+                f"Mevcut karakter durumu: {self.get_character_summary()}]"
+            ),
+        }
+
+        # Yeni geçmişi oluştur: sistem + özet + korunan mesajlar
+        self._message_history = [system_msg, summary_msg] + kept_messages
+
+    def _parse_hp_changes(self, ai_response: Dict[str, Any]) -> None:
+        """
+        AI yanıtındaki hikaye metninden HP, eşya ve altın değişimlerini ayrıştırır.
+
+        Format örnekleri:
+            [HP:-10]  → 10 hasar
+            [HP:+5]   → 5 iyileşme
+            [ESYA:Büyülü Yüzük]  → Envantere ekleme
+            [ALTIN:+20]  → 20 altın kazanma
+
+        Args:
+            ai_response: AI'dan gelen ayrıştırılmış JSON sözlüğü.
+        """
+        import re
+
+        story = ai_response.get("hikaye_metni", "")
+
+        # HP değişimlerini bul ve uygula
+        hp_matches = re.findall(r"\[HP:([+-]?\d+)\]", story)
+        for match in hp_matches:
+            self.modify_hp(int(match))
+
+        # Eşya eklemelerini bul ve uygula
+        item_matches = re.findall(r"\[ESYA:(.+?)\]", story)
+        for item in item_matches:
+            self.add_to_inventory(item.strip())
+
+        # Altın değişimlerini bul ve uygula
+        gold_matches = re.findall(r"\[ALTIN:([+-]?\d+)\]", story)
+        for match in gold_matches:
+            self.modify_gold(int(match))
+
+        # İşlenen tag'leri hikaye metninden temizle
+        cleaned_story = re.sub(r"\[HP:[+-]?\d+\]", "", story)
+        cleaned_story = re.sub(r"\[ESYA:.+?\]", "", cleaned_story)
+        cleaned_story = re.sub(r"\[ALTIN:[+-]?\d+\]", "", cleaned_story)
+        self.current_story = cleaned_story.strip()
+
+    # ------------------------------------------------------------------ #
+    #  DUNDER METODLAR                                                    #
+    # ------------------------------------------------------------------ #
+
+    def __repr__(self) -> str:
+        return (
+            f"GameState(character={self.character.name}, "
+            f"hp={self.character.hp}/{self.character.max_hp}, "
+            f"turn={self.turn_count}, "
+            f"location={self.current_location})"
+        )
