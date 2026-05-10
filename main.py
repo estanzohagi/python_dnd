@@ -438,17 +438,21 @@ class DnDGame:
 
         grant_extra_turn = False
 
+        # Stat etkileri
+        stat_fx = self.state.get_stat_effect_on_combat()
+
         if is_attack:
-            self._process_attack(accuracy, action, is_shape)
-            # Basarili saldiri -> ekstra tur sansi
-            if accuracy >= 70 and random.random() < self.EXTRA_TURN_CHANCE:
+            self._process_attack(accuracy, action, is_shape, stat_fx)
+            # Basarili saldiri -> ekstra tur sansi (LUCK arttirir)
+            extra_chance = self.EXTRA_TURN_CHANCE + stat_fx.get("extra_turn_bonus", 0)
+            if accuracy >= 70 and random.random() < extra_chance:
                 grant_extra_turn = True
 
         elif is_defense:
             self._process_defense(accuracy)
 
         elif is_flee:
-            self._process_flee(accuracy)
+            self._process_flee(accuracy, stat_fx)
 
         print(f"[!] HP: {self.state.character.hp} | Dusman HP: {self.state.enemy_hp}")
 
@@ -495,48 +499,53 @@ class DnDGame:
         self.fist_challenge.reset()
 
     def _process_attack(self, accuracy: float, action: str,
-                        is_shape: bool) -> None:
+                        is_shape: bool, stat_fx: dict = None) -> None:
         """
         Saldiri/Buyu sonucunu isler.
-
-        Challenge sonucu SADECE dusmana verilen hasari belirler.
-        Silah bonusu + sinif bonusu uygulanir.
-        Oyuncuya hasar VERILMEZ - hasar sadece dusman saldiri fazindan gelir.
+        Stat etkileri: STR -> fiziksel bonus, INT -> buyusel bonus, LUCK -> crit esigi.
         """
+        if stat_fx is None:
+            stat_fx = self.state.get_stat_effect_on_combat()
+
         # Silah ve sinif bonuslarini al
         weapon_stats = self.state.get_weapon_stats(self._selected_weapon)
         class_bonus = self.state.get_class_bonus()
         weapon_bonus = weapon_stats.get("bonus", 0)
         weapon_type = weapon_stats.get("type", "fiziksel")
 
-        # Sinif carpani: Savasci fiziksel, Buyucu buyusel
+        # Sinif carpani
         action_lower = action.lower()
         if action_lower == "buyu" or weapon_type == "buyusel":
             class_mult = class_bonus.get("magic_mult", 1.0)
+            stat_bonus = stat_fx.get("magic_bonus", 0)
         else:
             class_mult = class_bonus.get("attack_mult", 1.0)
+            stat_bonus = stat_fx.get("attack_bonus", 0)
 
-        if is_shape and accuracy >= self.CRITICAL_HIT_THRESHOLD:
-            # KRITIK VURUS! (%85+ sadece sekil challenge)
-            base_dmg = random.randint(30, 50) + weapon_bonus
+        # LUCK bazli kritik esigi dusurme
+        crit_threshold = self.CRITICAL_HIT_THRESHOLD - stat_fx.get("crit_bonus", 0)
+
+        if is_shape and accuracy >= crit_threshold:
+            # KRITIK VURUS!
+            base_dmg = random.randint(30, 50) + weapon_bonus + stat_bonus
             enemy_dmg = int(base_dmg * 1.5 * class_mult)
             self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
             self.state.current_feedback = f"KRITIK VURUS! Dusmana -{enemy_dmg} hasar!"
             print(f"[!!] KRITIK VURUS! Dusmana -{enemy_dmg} (silah: {self._selected_weapon})")
         elif accuracy >= 70:
             # Basarili saldiri
-            base_dmg = random.randint(25, 40) + weapon_bonus
+            base_dmg = random.randint(25, 40) + weapon_bonus + stat_bonus
             enemy_dmg = int(base_dmg * class_mult)
             self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
             self.state.current_feedback = f"Basarili {action}! Dusmana -{enemy_dmg} hasar!"
         elif accuracy >= 40:
-            # Kismi basari: az hasar ver
-            base_dmg = random.randint(10, 20) + weapon_bonus // 2
+            # Kismi basari
+            base_dmg = random.randint(10, 20) + weapon_bonus // 2 + stat_bonus // 2
             enemy_dmg = int(base_dmg * class_mult)
             self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
             self.state.current_feedback = f"Kismi basari! Dusmana -{enemy_dmg} hasar."
         else:
-            # Basarisiz: dusmana hasar yok
+            # Basarisiz
             self.state.current_feedback = f"Basarisiz {action}! Dusman saldirisi geliyor!"
 
     def _process_defense(self, accuracy: float) -> None:
@@ -570,20 +579,22 @@ class DnDGame:
             self._defense_partial = False
             print(f"[-] Savunma basarisiz! Dusman normal saldirisi gelecek")
 
-    def _process_flee(self, accuracy: float) -> None:
+    def _process_flee(self, accuracy: float, stat_fx: dict = None) -> None:
         """
         Kacis sonucunu isler.
-
-        Kacis challenge'i ASLA dogrudan hasar vermez.
-        Hirsiz sinifi icin esik %40'a duser.
+        DEX stat'i kacis basari esigini dusurur.
         """
+        if stat_fx is None:
+            stat_fx = self.state.get_stat_effect_on_combat()
+
         class_bonus = self.state.get_class_bonus()
         flee_threshold = class_bonus.get("flee_threshold", 70)
+        # DEX bazli kacis bonusu (esigi dusurur)
+        flee_threshold = max(30, flee_threshold - stat_fx.get("flee_bonus", 0))
 
         if accuracy >= flee_threshold:
             self.state.current_feedback = "Basariyla kactin!"
         else:
-            # Basarisiz: kacilamadi (hasar dusman fazinda gelecek)
             self.state.current_feedback = "Kacilamadi! Dusman saldirisi geliyor!"
 
     # ------------------------------------------------------------------ #
@@ -591,28 +602,39 @@ class DnDGame:
     # ------------------------------------------------------------------ #
 
     def _start_enemy_attack(self) -> None:
-        """Dusman saldiri fazini baslatir (3 saniye animasyon)."""
+        """Dusman saldiri fazini baslatir. DEF stat'i hasari azaltir, DEX dodge sansi verir."""
+        stat_fx = self.state.get_stat_effect_on_combat()
+
+        # DEX bazli dodge (tamamen kacinma)
+        dodge_chance = stat_fx.get("dodge_chance", 0)
+        if dodge_chance > 0 and random.random() < dodge_chance:
+            self._enemy_attack_damage = 0
+            self._defense_blocked = True
+            print(f"[>] DEX DODGE! Dusman saldirisi atlatildi!")
+            self._enemy_attack_start = time.time()
+            self._enemy_attack_applied = False
+            self.current_phase = self.PHASE_ENEMY_ATTACK
+            return
+
         # Sinif savunma bonusu (Okcu: %20 hasar azaltma)
         class_bonus = self.state.get_class_bonus()
         defense_reduction = class_bonus.get("defense_reduction", 0.0)
+        # DEF stat bazli ek azaltma
+        stat_defense = stat_fx.get("defense_reduction", 0.0)
+        total_reduction = min(0.6, defense_reduction + stat_defense)
 
         if self._defense_blocked:
-            # Basarili savunma: dusman saldirisi engellendi, hasar 0
             self._enemy_attack_damage = 0
             print(f"[>] Dusman saldiri fazi basladi! SAVUNMA ENGELLEDI - Hasar: 0")
         elif self._defense_partial:
-            # Kismi savunma: hasar %50 azaltildi
             full_dmg = random.randint(8, 22)
-            reduced = int(full_dmg * (1.0 - defense_reduction))
+            reduced = int(full_dmg * (1.0 - total_reduction))
             self._enemy_attack_damage = reduced // 2
-            print(f"[>] Dusman saldiri fazi basladi! KISMI SAVUNMA - Hasar: {self._enemy_attack_damage} (tam: {full_dmg})")
+            print(f"[>] Dusman saldiri fazi: KISMI SAVUNMA - Hasar: {self._enemy_attack_damage}")
         else:
             full_dmg = random.randint(8, 22)
-            self._enemy_attack_damage = int(full_dmg * (1.0 - defense_reduction))
-            if defense_reduction > 0:
-                print(f"[>] Dusman saldiri fazi basladi! Hasar: {self._enemy_attack_damage} (sinif bonusu: -{defense_reduction*100:.0f}%)")
-            else:
-                print(f"[>] Dusman saldiri fazi basladi! Hasar: {self._enemy_attack_damage}")
+            self._enemy_attack_damage = int(full_dmg * (1.0 - total_reduction))
+            print(f"[>] Dusman saldiri fazi: Hasar: {self._enemy_attack_damage}")
         self._enemy_attack_start = time.time()
         self._enemy_attack_applied = False
         self.current_phase = self.PHASE_ENEMY_ATTACK
@@ -927,7 +949,9 @@ class DnDGame:
             self._inventory_page,
             self._inv_hovered_idx,
             self._inv_hovered_devam,
-            dwell_progress
+            dwell_progress,
+            total_stats=self.state.get_total_stats(),
+            stat_names=self.state.STAT_NAMES
         )
 
         if finger_pos:
@@ -1021,7 +1045,9 @@ class DnDGame:
             frame, all_weapons, equipped, all_items,
             self.state.get_weapon_stats,
             self._inventory_page,
-            hovered_idx, hovered_devam, dwell_progress
+            hovered_idx, hovered_devam, dwell_progress,
+            total_stats=self.state.get_total_stats(),
+            stat_names=self.state.STAT_NAMES
         )
 
         # Parmak imleci

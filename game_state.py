@@ -22,6 +22,8 @@ class Character:
         max_hp: Maksimum can puanı.
         inventory: Envanter listesi.
         gold: Altın miktarı.
+        base_stats: Sinif bazli temel istatistikler.
+        event_stats: Olaylardan gelen gecici istatistik bonuslari.
     """
     name: str = "Kahraman"
     char_class: str = "Maceraperest"
@@ -29,6 +31,14 @@ class Character:
     max_hp: int = 100
     inventory: List[str] = field(default_factory=lambda: ["Pasli Kilic", "Mesale"])
     gold: int = 50
+    # Temel istatistikler (sinif seciminde atanir)
+    base_stats: Dict[str, int] = field(default_factory=lambda: {
+        "STR": 10, "DEX": 10, "INT": 10, "DEF": 10, "LUCK": 10
+    })
+    # Olaylardan gelen kalici bonuslar
+    event_stats: Dict[str, int] = field(default_factory=lambda: {
+        "STR": 0, "DEX": 0, "INT": 0, "DEF": 0, "LUCK": 0
+    })
 
 
 class GameState:
@@ -74,6 +84,14 @@ class GameState:
         "Hirsiz": {"hp": 90, "max_hp": 90, "gold": 80},
     }
 
+    # Sinif bazli temel istatistikler
+    CLASS_BASE_STATS = {
+        "Savasci": {"STR": 16, "DEX": 10, "INT": 8,  "DEF": 14, "LUCK": 8},
+        "Buyucu":  {"STR": 6,  "DEX": 10, "INT": 18, "DEF": 8,  "LUCK": 10},
+        "Okcu":    {"STR": 10, "DEX": 16, "INT": 10, "DEF": 10, "LUCK": 12},
+        "Hirsiz":  {"STR": 8,  "DEX": 14, "INT": 10, "DEF": 8,  "LUCK": 18},
+    }
+
     WEAPON_DATA = {
         "Savasci": ["Celik Kilic", "Savas Baltasi", "Mizrak", "Cift El Kilici"],
         "Buyucu": ["Ates Asasi", "Buz Asasi", "Yildirim Degnek", "Karanlik Grimoire"],
@@ -81,32 +99,41 @@ class GameState:
         "Hirsiz": ["Gizli Hancer", "Zehirli Bicak", "Garoz Seti", "Duman Bombalari"],
     }
 
-    # Silah istatistikleri: hasar bonusu ve tipi (fiziksel/buyusel)
+    # Silah istatistikleri: hasar bonusu, tipi, ve stat bonuslari
     WEAPON_STATS = {
         # Savasci silahlari
-        "Celik Kilic":       {"bonus": 5,  "type": "fiziksel"},
-        "Savas Baltasi":     {"bonus": 8,  "type": "fiziksel"},
-        "Mizrak":            {"bonus": 4,  "type": "fiziksel"},
-        "Cift El Kilici":    {"bonus": 10, "type": "fiziksel"},
+        "Celik Kilic":       {"bonus": 5,  "type": "fiziksel", "stats": {"STR": 3, "DEF": 1}},
+        "Savas Baltasi":     {"bonus": 8,  "type": "fiziksel", "stats": {"STR": 5, "DEX": -1}},
+        "Mizrak":            {"bonus": 4,  "type": "fiziksel", "stats": {"STR": 2, "DEX": 2}},
+        "Cift El Kilici":    {"bonus": 10, "type": "fiziksel", "stats": {"STR": 6, "DEF": -2}},
         # Buyucu silahlari
-        "Ates Asasi":        {"bonus": 7,  "type": "buyusel"},
-        "Buz Asasi":         {"bonus": 6,  "type": "buyusel"},
-        "Yildirim Degnek":   {"bonus": 9,  "type": "buyusel"},
-        "Karanlik Grimoire": {"bonus": 12, "type": "buyusel"},
+        "Ates Asasi":        {"bonus": 7,  "type": "buyusel",  "stats": {"INT": 4, "STR": -1}},
+        "Buz Asasi":         {"bonus": 6,  "type": "buyusel",  "stats": {"INT": 3, "DEF": 2}},
+        "Yildirim Degnek":   {"bonus": 9,  "type": "buyusel",  "stats": {"INT": 5, "LUCK": 1}},
+        "Karanlik Grimoire": {"bonus": 12, "type": "buyusel",  "stats": {"INT": 7, "LUCK": -2}},
         # Okcu silahlari
-        "Uzun Yay":          {"bonus": 6,  "type": "fiziksel"},
-        "Arbalete":          {"bonus": 8,  "type": "fiziksel"},
-        "Cift Kisa Yay":     {"bonus": 5,  "type": "fiziksel"},
-        "Zehirli Ok Seti":   {"bonus": 7,  "type": "buyusel"},
+        "Uzun Yay":          {"bonus": 6,  "type": "fiziksel", "stats": {"DEX": 4, "STR": 1}},
+        "Arbalete":          {"bonus": 8,  "type": "fiziksel", "stats": {"DEX": 3, "STR": 3}},
+        "Cift Kisa Yay":     {"bonus": 5,  "type": "fiziksel", "stats": {"DEX": 5, "DEF": -1}},
+        "Zehirli Ok Seti":   {"bonus": 7,  "type": "buyusel",  "stats": {"DEX": 2, "INT": 3}},
         # Hirsiz silahlari
-        "Gizli Hancer":      {"bonus": 6,  "type": "fiziksel"},
-        "Zehirli Bicak":     {"bonus": 7,  "type": "buyusel"},
-        "Garoz Seti":        {"bonus": 4,  "type": "fiziksel"},
-        "Duman Bombalari":   {"bonus": 5,  "type": "buyusel"},
+        "Gizli Hancer":      {"bonus": 6,  "type": "fiziksel", "stats": {"DEX": 3, "LUCK": 2}},
+        "Zehirli Bicak":     {"bonus": 7,  "type": "buyusel",  "stats": {"DEX": 2, "INT": 2, "LUCK": 1}},
+        "Garoz Seti":        {"bonus": 4,  "type": "fiziksel", "stats": {"DEX": 4, "LUCK": 3}},
+        "Duman Bombalari":   {"bonus": 5,  "type": "buyusel",  "stats": {"DEX": 1, "LUCK": 4}},
         # Varsayilan
-        "Pasli Kilic":       {"bonus": 2,  "type": "fiziksel"},
-        "Mesale":            {"bonus": 1,  "type": "fiziksel"},
-        "Yumruk":            {"bonus": 0,  "type": "fiziksel"},
+        "Pasli Kilic":       {"bonus": 2,  "type": "fiziksel", "stats": {"STR": 1}},
+        "Mesale":            {"bonus": 1,  "type": "fiziksel", "stats": {}},
+        "Yumruk":            {"bonus": 0,  "type": "fiziksel", "stats": {}},
+    }
+
+    # Stat isimleri (gosterim icin)
+    STAT_NAMES = {
+        "STR": "Guc",
+        "DEX": "Cevik",
+        "INT": "Zeka",
+        "DEF": "Savun",
+        "LUCK": "Sans",
     }
 
     # Sinif bonuslari
@@ -310,6 +337,23 @@ class GameState:
                 else:
                     self.current_feedback = f"Yeni esya bulundu: {yeni_esya}!"
 
+        # ----- Stat degisimleri (AI yonetimli) -----
+        stat_degisim = ai_response.get("stat_degisim", {})
+        if isinstance(stat_degisim, dict):
+            for stat_key, amount in stat_degisim.items():
+                stat_key_upper = stat_key.upper()
+                if stat_key_upper in self.character.event_stats and isinstance(amount, (int, float)):
+                    amount = int(amount)
+                    if amount != 0:
+                        self.apply_event_stat(stat_key_upper, amount)
+                        name = self.STAT_NAMES.get(stat_key_upper, stat_key_upper)
+                        sign = "+" if amount > 0 else ""
+                        stat_msg = f"{name} {sign}{amount}"
+                        if self.current_feedback:
+                            self.current_feedback += f" | {stat_msg}"
+                        else:
+                            self.current_feedback = stat_msg
+
         # Yedek: hikaye metni icindeki tag'lerden de oku
         self._parse_hp_changes(ai_response)
 
@@ -419,16 +463,73 @@ class GameState:
             Karakter durum özeti.
         """
         inv_str = ", ".join(self.character.inventory) if self.character.inventory else "Boş"
+        total = self.get_total_stats()
+        stat_str = ", ".join(f"{k}:{v}" for k, v in total.items())
         return (
             f"[Karakter Durumu] "
             f"Ad: {self.character.name} | "
             f"Sınıf: {self.character.char_class} | "
             f"HP: {self.character.hp}/{self.character.max_hp} | "
             f"Altın: {self.character.gold} | "
+            f"Stats: {stat_str} | "
             f"Envanter: {inv_str} | "
             f"Konum: {self.current_location} | "
             f"Tur: {self.turn_count}"
         )
+
+    def get_total_stats(self) -> Dict[str, int]:
+        """Toplam istatistikleri hesaplar: base + equipped weapon stats + event stats."""
+        total = dict(self.character.base_stats)
+        # Equipped silahlardan bonus
+        for weapon in self.equipped_items:
+            w_stats = self.get_weapon_stats(weapon)
+            for stat_key, stat_val in w_stats.get("stats", {}).items():
+                if stat_key in total:
+                    total[stat_key] += stat_val
+        # Event bonuslari
+        for stat_key, stat_val in self.character.event_stats.items():
+            if stat_key in total:
+                total[stat_key] += stat_val
+        return total
+
+    def get_stat_breakdown(self, stat_key: str) -> Dict[str, int]:
+        """Belirli bir stat'in kaynaklarini dondurur (base, weapon, event)."""
+        base_val = self.character.base_stats.get(stat_key, 0)
+        weapon_val = 0
+        for weapon in self.equipped_items:
+            w_stats = self.get_weapon_stats(weapon)
+            weapon_val += w_stats.get("stats", {}).get(stat_key, 0)
+        event_val = self.character.event_stats.get(stat_key, 0)
+        return {"base": base_val, "weapon": weapon_val, "event": event_val}
+
+    def apply_event_stat(self, stat_key: str, amount: int) -> None:
+        """Olay bazli istatistik bonusu uygular (kalici)."""
+        if stat_key in self.character.event_stats:
+            self.character.event_stats[stat_key] += amount
+            print(f"[STAT] {stat_key} {'+'if amount>=0 else ''}{amount} (event)")
+
+    def get_stat_effect_on_combat(self) -> Dict[str, float]:
+        """
+        Istatistiklerin savas uzerindeki etkilerini hesaplar.
+        Returns dict with multipliers/bonuses:
+          attack_bonus: STR bazli ek hasar
+          magic_bonus: INT bazli ek hasar
+          defense_reduction: DEF bazli hasar azaltma orani
+          dodge_chance: DEX bazli kacinma sansi
+          crit_bonus: LUCK bazli kritik sans artisi
+          extra_turn_bonus: LUCK bazli ekstra tur sans artisi
+          flee_bonus: DEX bazli kacis sans artisi
+        """
+        total = self.get_total_stats()
+        return {
+            "attack_bonus": max(0, (total.get("STR", 10) - 10) // 2),
+            "magic_bonus": max(0, (total.get("INT", 10) - 10) // 2),
+            "defense_reduction": min(0.5, total.get("DEF", 10) * 0.015),
+            "dodge_chance": min(0.25, (total.get("DEX", 10) - 10) * 0.02),
+            "crit_bonus": min(10.0, (total.get("LUCK", 10) - 10) * 0.5),
+            "extra_turn_bonus": min(0.15, (total.get("LUCK", 10) - 10) * 0.01),
+            "flee_bonus": min(15.0, (total.get("DEX", 10) - 10) * 1.5),
+        }
 
     def modify_hp(self, amount: int) -> None:
         """
@@ -446,6 +547,10 @@ class GameState:
         self.character.hp = data.get("hp", 100)
         self.character.max_hp = data.get("max_hp", 100)
         self.character.gold = data.get("gold", 50)
+        # Sinif bazli istatistikleri uygula
+        base = self.CLASS_BASE_STATS.get(class_name, {"STR": 10, "DEX": 10, "INT": 10, "DEF": 10, "LUCK": 10})
+        self.character.base_stats = dict(base)
+        self.character.event_stats = {"STR": 0, "DEX": 0, "INT": 0, "DEF": 0, "LUCK": 0}
 
     def apply_weapon_choice(self, weapon: str) -> None:
         """Baslangic silahini uygular."""
@@ -467,7 +572,10 @@ class GameState:
                           "zehir", "sihirli")
         is_magic = any(kw in weapon_lower for kw in magic_keywords)
         # Dinamik silahlar genelde iyi olur (odul oldugu icin)
-        return {"bonus": 8, "type": "buyusel" if is_magic else "fiziksel"}
+        if is_magic:
+            return {"bonus": 8, "type": "buyusel", "stats": {"INT": 4, "LUCK": 1}}
+        else:
+            return {"bonus": 8, "type": "fiziksel", "stats": {"STR": 3, "DEX": 2}}
 
     def get_class_bonus(self) -> dict:
         """Karakter sinifinin bonus verilerini dondurur."""
@@ -598,6 +706,7 @@ class GameState:
             '"hp_degisim": 0, "altin_degisim": 0, '
             '"zar_gerekli": false, "zar_secenegi": "", '
             '"yeni_esya": "", '
+            '"stat_degisim": {}, '
             '"secenekler": {"sol_ust": "Ilerle", "sag_ust": "Etrafina bak", "sol_alt": "Geri don", "sag_alt": "Bekle"}}\n'
             "4. Hikaye 3-4 cumleyi, secenekler 5-6 kelimeyi gecmesin.\n"
             "5. MOD ALANI (ZORUNLU):\n"
@@ -634,7 +743,14 @@ class GameState:
             "   - Savas kazanildiktan sonra %30 ihtimalle dusmandan dusecek bir silah ver (ornek: 'Ates Kilici', 'Buzlu Balta', 'Zehirli Hancer', 'Isik Asasi').\n"
             "   - Kesif sirasinda nadir olarak (her 5-6 turda bir) gizli bir silah veya esya buldur.\n"
             "   - Verilen silahlar tematik olsun (Buzul Sarayi'nda 'Buz Kilici', Ruhlar Cehennemi'nde 'Lanetli Balta' gibi).\n"
-            "   - Ayni esyayi tekrar verme. Envantere bak ve farkli seyler ver."
+            "   - Ayni esyayi tekrar verme. Envantere bak ve farkli seyler ver.\n"
+            "15. ISTATISTIK SISTEMI (stat_degisim):\n"
+            "   - stat_degisim: Oyuncunun istatistiklerini degistirmek icin kullan. Bos obje {} ise degisim yok.\n"
+            "   - Kullanilabilir statlar: STR (guc), DEX (cevik), INT (zeka), DEF (savunma), LUCK (sans).\n"
+            "   - Ornek: {\"STR\": 2, \"DEF\": -1} -> +2 guc, -1 savunma.\n"
+            "   - Ozel olaylarda stat ver: Antrenman -> STR+1/2, Buyu ogrenme -> INT+1/2, Tuzak atlama -> DEX+1, Lanetlenme -> herhangi stat -1/-2.\n"
+            "   - Savas kazanildiktan sonra bazen stat ver. Her turda verme, sadece onemli olaylarda.\n"
+            "   - Stat degisimleri kucuk olsun: -2 ile +3 arasi. Abartma."
         )
 
         self._message_history.append({
