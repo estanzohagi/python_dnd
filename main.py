@@ -302,9 +302,6 @@ class DnDGame:
             self.state.startup_step = 1
             print(f"[>] Sinif secildi: {choice_text}")
 
-            # Sinif muzigini baslat
-            self.music.play_class_music(choice_text)
-
         elif step == 1:
             # Silah secildi
             self.state.apply_weapon_choice(choice_text)
@@ -323,6 +320,9 @@ class DnDGame:
             self.state.is_startup = False
             self.state.current_mode = "kesif"
             self.state.add_user_choice(f"Tema secildi: {choice_text}")
+
+            # Tema muzigini baslat
+            self.music.play_theme_music(choice_text)
 
             self.state.is_waiting_for_ai = True
             history = self.state.get_message_history()
@@ -385,14 +385,18 @@ class DnDGame:
             self._weapon_select_options = weapons
             self._weapon_combat_action = choice_text
 
-            if len(weapons) <= 1:
-                # Tek silah varsa direkt challenge (secim ekrani atla)
-                self._selected_weapon = weapons[0] if weapons else "Yumruk"
+            if len(weapons) == 0:
+                # Silahsiz savas - yumruk
+                self._selected_weapon = "Yumruk"
+                self.state.equipped_weapon = "Yumruk"
+                print(f"[>] Silahsiz savas! Yumruk kullaniliyor.")
+                self._start_actual_challenge(choice_text)
+            elif len(weapons) == 1:
+                self._selected_weapon = weapons[0]
                 self.state.equipped_weapon = self._selected_weapon
                 print(f"[>] Tek silah, otomatik secildi: {self._selected_weapon}")
                 self._start_actual_challenge(choice_text)
             else:
-                # Birden fazla silah: secim ekrani goster
                 option_keys = ["sol_ust", "sag_ust", "sol_alt", "sag_alt"]
                 self.state.current_options = {}
                 for i, key in enumerate(option_keys):
@@ -422,7 +426,7 @@ class DnDGame:
             print(f"[>] Yumruk challenge basladi - {choice_text}")
 
     def _restore_combat_options(self) -> None:
-        """Savas modunda standart secenekleri geri yukler (silah seciminden sonra)."""
+        """Savas modunda standart secenekleri geri yukler."""
         if self.state.current_mode == "savas":
             self.state.current_options = {
                 "sol_ust": "Saldir",
@@ -431,7 +435,7 @@ class DnDGame:
                 "sag_alt": "Buyu",
             }
             self.state.active_option_count = 4
-            self.state.current_story = "Savas devam ediyor! Hamleni sec."
+            # current_story challenge sonucu ile guncelleniyor, burada degistirmeye gerek yok
 
     # ------------------------------------------------------------------ #
     #  SIRAS TABANLI SAVAS MEKANIGI                                       #
@@ -528,18 +532,17 @@ class DnDGame:
                         is_shape: bool, stat_fx: dict = None) -> None:
         """
         Saldiri/Buyu sonucunu isler.
-        Stat etkileri: STR -> fiziksel bonus, INT -> buyusel bonus, LUCK -> crit esigi.
+        Silahsiz = cok az hasar. Silahli = normal hasar + description.
         """
         if stat_fx is None:
             stat_fx = self.state.get_stat_effect_on_combat()
 
-        # Silah ve sinif bonuslarini al
         weapon_stats = self.state.get_weapon_stats(self._selected_weapon)
         class_bonus = self.state.get_class_bonus()
         weapon_bonus = weapon_stats.get("bonus", 0)
         weapon_type = weapon_stats.get("type", "fiziksel")
+        is_unarmed = self._selected_weapon in ("Yumruk", "")
 
-        # Sinif carpani
         action_lower = action.lower()
         if action_lower == "buyu" or weapon_type == "buyusel":
             class_mult = class_bonus.get("magic_mult", 1.0)
@@ -548,31 +551,50 @@ class DnDGame:
             class_mult = class_bonus.get("attack_mult", 1.0)
             stat_bonus = stat_fx.get("attack_bonus", 0)
 
-        # LUCK bazli kritik esigi dusurme
         crit_threshold = self.CRITICAL_HIT_THRESHOLD - stat_fx.get("crit_bonus", 0)
 
+        # Silahsiz hasar cok dusuk
+        if is_unarmed:
+            weapon_bonus = 0
+            class_mult = 0.3
+
+        # Betimlemeler
+        weapon_name = self._selected_weapon if not is_unarmed else "yumruklari"
+
         if is_shape and accuracy >= crit_threshold:
-            # KRITIK VURUS!
-            base_dmg = random.randint(30, 50) + weapon_bonus + stat_bonus
+            if is_unarmed:
+                base_dmg = random.randint(5, 12) + stat_bonus
+            else:
+                base_dmg = random.randint(30, 50) + weapon_bonus + stat_bonus
             enemy_dmg = int(base_dmg * 1.5 * class_mult)
             self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
-            self.state.current_feedback = f"KRITIK VURUS! Dusmana -{enemy_dmg} hasar!"
-            print(f"[!!] KRITIK VURUS! Dusmana -{enemy_dmg} (silah: {self._selected_weapon})")
+            desc = f"KRITIK VURUS! {weapon_name} ile muhtesem bir darbe! -{enemy_dmg} hasar!"
+            self.state.current_feedback = desc
+            self.state.current_story = desc
         elif accuracy >= 70:
-            # Basarili saldiri
-            base_dmg = random.randint(25, 40) + weapon_bonus + stat_bonus
+            if is_unarmed:
+                base_dmg = random.randint(3, 8) + stat_bonus
+            else:
+                base_dmg = random.randint(25, 40) + weapon_bonus + stat_bonus
             enemy_dmg = int(base_dmg * class_mult)
             self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
-            self.state.current_feedback = f"Basarili {action}! Dusmana -{enemy_dmg} hasar!"
+            desc = f"{weapon_name} ile guclu bir {action}! Dusmana -{enemy_dmg} hasar!"
+            self.state.current_feedback = desc
+            self.state.current_story = desc
         elif accuracy >= 40:
-            # Kismi basari
-            base_dmg = random.randint(10, 20) + weapon_bonus // 2 + stat_bonus // 2
+            if is_unarmed:
+                base_dmg = random.randint(1, 4) + stat_bonus // 2
+            else:
+                base_dmg = random.randint(10, 20) + weapon_bonus // 2 + stat_bonus // 2
             enemy_dmg = int(base_dmg * class_mult)
             self.state.enemy_hp = max(0, self.state.enemy_hp - enemy_dmg)
-            self.state.current_feedback = f"Kismi basari! Dusmana -{enemy_dmg} hasar."
+            desc = f"{weapon_name} ile sikiyoruz ama tam isabetle degil. -{enemy_dmg} hasar."
+            self.state.current_feedback = desc
+            self.state.current_story = desc
         else:
-            # Basarisiz
-            self.state.current_feedback = f"Basarisiz {action}! Dusman saldirisi geliyor!"
+            desc = f"{weapon_name} ile hamle basarisiz! Dusman saldirisi geliyor!"
+            self.state.current_feedback = desc
+            self.state.current_story = desc
 
     def _process_defense(self, accuracy: float) -> None:
         """
@@ -585,25 +607,25 @@ class DnDGame:
           - Basarisiz (<40%): Dusman tam hasar verir (ama challenge'dan hasar yok)
         """
         if accuracy >= 70:
-            # Basarili savunma: CAN YENILENIR + dusman saldirisi engellenir
             heal = random.randint(8, 20)
             self.state.modify_hp(heal)
-            self.state.current_feedback = f"Mukemmel savunma! +{heal} HP yenilendi!"
+            desc = f"Mukemmel savunma! Kalkanini yukseltip tum hasari engelledin! +{heal} HP yenilendi!"
+            self.state.current_feedback = desc
+            self.state.current_story = desc
             self._defense_blocked = True
             self._defense_partial = False
-            print(f"[+] Savunma basarili! +{heal} HP (dusman saldirisi engellenecek)")
         elif accuracy >= 40:
-            # Kismi savunma: hasar yok, ama dusmanin saldirisi %50 azalir
-            self.state.current_feedback = "Kismi savunma! Dusman hasari azalacak."
+            desc = "Savunma durusuna gectin ama tam koruyamadin. Hasar azalacak."
+            self.state.current_feedback = desc
+            self.state.current_story = desc
             self._defense_blocked = False
             self._defense_partial = True
-            print(f"[~] Kismi savunma! Dusman hasari yarilayacak")
         else:
-            # Basarisiz savunma: hasar yok, dusman tam hasar verir
-            self.state.current_feedback = "Savunma basarisiz! Dusman tam hasar verecek."
+            desc = "Savunma basarisiz! Dusman tam gucuyle saldiriyor!"
+            self.state.current_feedback = desc
+            self.state.current_story = desc
             self._defense_blocked = False
             self._defense_partial = False
-            print(f"[-] Savunma basarisiz! Dusman normal saldirisi gelecek")
 
     def _process_flee(self, accuracy: float, stat_fx: dict = None) -> None:
         """
@@ -949,26 +971,31 @@ class DnDGame:
     INV_DEVAM_DWELL = 1.5  # Devam butonu secim suresi
 
     def _handle_inventory(self, frame: np.ndarray) -> None:
-        """Envanter ekranini yonetir - el takibiyle item equip/unequip."""
+        """Envanter ekranini yonetir - el takibiyle item equip/unequip + shop."""
         finger_pos = self.tracker.detect_finger(frame)
 
-        # Mevcut silahlar ve envanter
         all_weapons = self.state.get_all_weapons()
         equipped = self.state.equipped_items
         all_items = self.state.character.inventory
 
-        # Eger silah yoksa direkt devam
         if not all_weapons:
             self.current_phase = self.PHASE_NORMAL
-            print("[>] Envanterde silah yok, devam ediliyor...")
             return
 
-        # Hover tespiti
         hovered_idx = -1
         hovered_devam = False
+        hovered_prev = False
+        hovered_next = False
+        hovered_shop = -1
+        hovered_roll = False
         dwell_progress = 0.0
 
-        # Onceki frame'den regions'i kullanmak icin preview ciz
+        # Shop verilerini al
+        shop_items = self.state.get_shop_items()
+        shop_roll_cost = self.state.get_shop_roll_cost()
+        gold = self.state.character.gold
+
+        # Preview ciz (regions almak icin)
         frame_preview, regions = self.ui.draw_inventory(
             frame, all_weapons, equipped, all_items,
             self.state.get_weapon_stats,
@@ -977,49 +1004,53 @@ class DnDGame:
             self._inv_hovered_devam,
             dwell_progress,
             total_stats=self.state.get_total_stats(),
-            stat_names=self.state.STAT_NAMES
+            stat_names=self.state.STAT_NAMES,
+            shop_items=shop_items,
+            shop_roll_cost=shop_roll_cost,
+            gold=gold,
+            hovered_shop=getattr(self, '_inv_hovered_shop', -1),
+            hovered_roll=getattr(self, '_inv_hovered_roll', False),
+            hovered_prev=getattr(self, '_inv_hovered_prev', False),
+            hovered_next=getattr(self, '_inv_hovered_next', False)
         )
 
         if finger_pos:
             fx, fy = finger_pos
 
-            # Item satirlarina bak
+            # Item satirlari
             for i, (item_name, (x1, y1, x2, y2)) in enumerate(regions['items']):
                 if x1 <= fx <= x2 and y1 <= fy <= y2:
                     hovered_idx = i
                     break
 
-            # Devam butonuna bak
+            # Devam butonu
             if regions['devam']:
                 dx1, dy1, dx2, dy2 = regions['devam']
                 if dx1 <= fx <= dx2 and dy1 <= fy <= dy2:
                     hovered_devam = True
 
-            # Onceki sayfa butonuna bak
+            # Prev/Next butonlari
             if regions['prev']:
                 px1, py1, px2, py2 = regions['prev']
                 if px1 <= fx <= px2 and py1 <= fy <= py2:
-                    target = "prev"
-                    if self._inv_dwell_target != target:
-                        self._inv_dwell_target = target
-                        self._inv_dwell_start = time.time()
-                    elif time.time() - self._inv_dwell_start >= 0.8:
-                        self._inventory_page = max(0, self._inventory_page - 1)
-                        self._inv_dwell_start = time.time()
-                        self.tracker.reset_selection()
+                    hovered_prev = True
 
-            # Sonraki sayfa butonuna bak
             if regions['next']:
                 nx1, ny1, nx2, ny2 = regions['next']
                 if nx1 <= fx <= nx2 and ny1 <= fy <= ny2:
-                    target = "next"
-                    if self._inv_dwell_target != target:
-                        self._inv_dwell_target = target
-                        self._inv_dwell_start = time.time()
-                    elif time.time() - self._inv_dwell_start >= 0.8:
-                        self._inventory_page += 1
-                        self._inv_dwell_start = time.time()
-                        self.tracker.reset_selection()
+                    hovered_next = True
+
+            # Shop satirlari
+            for si, (shop_idx, (sx1, sy1, sx2, sy2)) in enumerate(regions.get('shop', [])):
+                if sx1 <= fx <= sx2 and sy1 <= fy <= sy2:
+                    hovered_shop = shop_idx
+                    break
+
+            # Roll butonu
+            if regions.get('roll'):
+                rx1, ry1, rx2, ry2 = regions['roll']
+                if rx1 <= fx <= rx2 and ry1 <= fy <= ry2:
+                    hovered_roll = True
 
         # Dwell hesapla
         now = time.time()
@@ -1032,51 +1063,101 @@ class DnDGame:
                 current_target = f"item:{item_name}"
         elif hovered_devam:
             current_target = "devam"
+        elif hovered_prev:
+            current_target = "prev"
+        elif hovered_next:
+            current_target = "next"
+        elif hovered_shop >= 0:
+            current_target = f"shop:{hovered_shop}"
+        elif hovered_roll:
+            current_target = "roll"
 
-        # Target degistiyse timer sifirla
         if current_target != self._inv_dwell_target:
             self._inv_dwell_target = current_target
             self._inv_dwell_start = now
 
-        # Dwell progress hesapla
         if current_target:
-            dwell_time = self.INV_DEVAM_DWELL if current_target == "devam" else self.INV_DWELL_TIME
+            if current_target in ("prev", "next"):
+                dwell_time = 0.8
+            elif current_target == "devam":
+                dwell_time = self.INV_DEVAM_DWELL
+            elif current_target.startswith("shop:") or current_target == "roll":
+                dwell_time = 1.0
+            else:
+                dwell_time = self.INV_DWELL_TIME
             elapsed = now - self._inv_dwell_start
             dwell_progress = min(elapsed / dwell_time, 1.0)
 
             if dwell_progress >= 1.0:
-                # Secim tamamlandi
                 if current_target == "devam":
-                    # Envanterden cik
                     self.current_phase = self.PHASE_NORMAL
                     self._inv_dwell_target = ""
                     self.tracker.reset_selection()
                     print(f"[>] Envanter kapatildi. Equipped: {self.state.equipped_items}")
                     return
+                elif current_target == "prev":
+                    self._inventory_page = max(0, self._inventory_page - 1)
+                    self._inv_dwell_start = now
+                    self._inv_dwell_target = ""
+                    print(f"[>] Sayfa: {self._inventory_page}")
+                elif current_target == "next":
+                    self._inventory_page += 1
+                    self._inv_dwell_start = now
+                    self._inv_dwell_target = ""
+                    print(f"[>] Sayfa: {self._inventory_page}")
                 elif current_target.startswith("item:"):
                     weapon = current_target[5:]
                     result = self.state.toggle_equipped(weapon)
                     status = "EQUIPPED" if result else "UNEQUIPPED"
                     print(f"[>] {weapon} -> {status}")
-                    # Timer'i sifirla ama target'i degistirme (bekleme efekti)
+                    self._inv_dwell_start = now
+                    self._inv_dwell_target = ""
+                elif current_target.startswith("shop:"):
+                    shop_idx = int(current_target[5:])
+                    if self.state.shop_buy(shop_idx):
+                        self.state.current_feedback = f"Stat satin alindi!"
+                    else:
+                        self.state.current_feedback = "Yeterli altin yok!"
+                    self._inv_dwell_start = now
+                    self._inv_dwell_target = ""
+                elif current_target == "roll":
+                    if self.state.shop_roll():
+                        self.state.current_feedback = "Secenekler yenilendi!"
+                    else:
+                        self.state.current_feedback = "Yeterli altin yok!"
                     self._inv_dwell_start = now
                     self._inv_dwell_target = ""
 
-        # Update hover state
+        # Hover state'lerini kaydet
         self._inv_hovered_idx = hovered_idx
         self._inv_hovered_devam = hovered_devam
+        self._inv_hovered_shop = hovered_shop
+        self._inv_hovered_roll = hovered_roll
+        self._inv_hovered_prev = hovered_prev
+        self._inv_hovered_next = hovered_next
 
-        # Gercek frame'i ciz (guncellenmis hover/progress ile)
+        # Guncellenmis verileri al
+        shop_items = self.state.get_shop_items()
+        shop_roll_cost = self.state.get_shop_roll_cost()
+        gold = self.state.character.gold
+
+        # Frame ciz
         frame, _ = self.ui.draw_inventory(
             frame, all_weapons, equipped, all_items,
             self.state.get_weapon_stats,
             self._inventory_page,
             hovered_idx, hovered_devam, dwell_progress,
             total_stats=self.state.get_total_stats(),
-            stat_names=self.state.STAT_NAMES
+            stat_names=self.state.STAT_NAMES,
+            shop_items=shop_items,
+            shop_roll_cost=shop_roll_cost,
+            gold=gold,
+            hovered_shop=hovered_shop,
+            hovered_roll=hovered_roll,
+            hovered_prev=hovered_prev,
+            hovered_next=hovered_next
         )
 
-        # Parmak imleci
         if finger_pos:
             frame = self.ui.draw_finger_cursor(frame, finger_pos)
         frame = self.tracker.draw_hand_landmarks(frame)
@@ -1117,13 +1198,14 @@ class DnDGame:
                     if current_mode == "savas":
                         self.music.play_battle_music()
                     elif self._last_music_mode == "savas":
-                        # Savastan cikildiysa envanter goster
+                        # Savastan cikildiysa envanter goster + shop sifirla
                         self.music.resume_class_music()
+                        self.state.init_shop()  # Shop'u sifirla
                         self.current_phase = self.PHASE_INVENTORY
                         self._inventory_page = 0
                         self._inv_dwell_start = 0.0
                         self._inv_dwell_target = ""
-                        print("[>] Savas bitti! Envanter ekrani aciliyor...")
+                        print("[>] Savas bitti! Envanter + Shop aciliyor...")
                     self._last_music_mode = current_mode
 
                 # Savas/baslangic disinda rastgele can dolumu

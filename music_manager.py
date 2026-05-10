@@ -1,15 +1,18 @@
 """
 music_manager.py - Oyun Müzik Yöneticisi
 ==========================================
-Her karakter sınıfı için ayrı müzik dosyası yönetir.
-Savaş modunda ortak savaş müziği çalar, savaştan çıkınca
-sınıf müziğine geri döner.
+Theme_Lores bazli muzik sistemi.
+Her tema (lokasyon) icin ayri muzik dosyasi yonetir.
+Savas modunda ortak savas muzigi calar, savastan cikinca
+tema muzigine geri doner.
 
 Beklenen dosya yapisi (music/ klasoru):
-  music/savasci.mp3
-  music/buyucu.mp3
-  music/okcu.mp3
-  music/hirsiz.mp3
+  music/karanlik_orman.mp3
+  music/kayip_sehir.mp3
+  music/buzul_sarayi.mp3
+  music/lanetli_zindan.mp3
+  music/ejderha_daglari.mp3
+  music/ruhlar_cehennemi.mp3
   music/savas.mp3
 """
 
@@ -26,33 +29,35 @@ except ImportError:
 
 class MusicManager:
     """
-    Oyun müzik yöneticisi.
+    Oyun müzik yöneticisi (tema bazli).
 
     Kullanım:
         manager = MusicManager()
-        manager.play_class_music("Savasci")   # Sınıf müziği başlat
-        manager.play_battle_music()            # Savaş müziğine geç
-        manager.resume_class_music()           # Sınıf müziğine geri dön
+        manager.play_theme_music("Karanlik Orman")   # Tema müziği başlat
+        manager.play_battle_music()                   # Savaş müziğine geç
+        manager.resume_class_music()                  # Tema müziğine geri dön
     """
 
-    # Sınıf -> müzik dosyası eşlemesi
-    CLASS_MUSIC = {
-        "Savasci": "savasci.mp3",
-        "Buyucu": "buyucu.mp3",
-        "Okcu": "okcu.mp3",
-        "Hirsiz": "hirsiz.mp3",
+    # Tema -> müzik dosyası eşlemesi
+    THEME_MUSIC = {
+        "Karanlik Orman": "karanlik_orman.mp3",
+        "Kayip Sehir": "kayip_sehir.mp3",
+        "Buzul Sarayi": "buzul_sarayi.mp3",
+        "Lanetli Zindan": "lanetli_zindan.mp3",
+        "Ejderha Daglari": "ejderha_daglari.mp3",
+        "Ruhlar Cehennemi": "ruhlar_cehennemi.mp3",
     }
 
     BATTLE_MUSIC = "savas.mp3"
 
     # Ses seviyeleri
-    CLASS_VOLUME = 0.4
+    THEME_VOLUME = 0.4
     BATTLE_VOLUME = 0.5
     FADE_MS = 1500  # Geçiş süresi (ms)
 
     def __init__(self):
         self._initialized = False
-        self._current_class: Optional[str] = None
+        self._current_theme: Optional[str] = None
         self._is_battle_playing: bool = False
         self._music_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "music"
@@ -76,17 +81,17 @@ class MusicManager:
         print(f"[!] Muzik dosyasi bulunamadi: {path}")
         return None
 
-    def play_class_music(self, class_name: str) -> None:
-        """Seçilen sınıfın müziğini çalmaya başlar (loop)."""
+    def play_theme_music(self, theme_name: str) -> None:
+        """Seçilen temanın müziğini çalmaya başlar (loop)."""
         if not self._initialized:
             return
 
-        self._current_class = class_name
+        self._current_theme = theme_name
         self._is_battle_playing = False
 
-        filename = self.CLASS_MUSIC.get(class_name)
+        filename = self.THEME_MUSIC.get(theme_name)
         if not filename:
-            print(f"[!] Bilinmeyen sinif: {class_name}")
+            print(f"[!] Bilinmeyen tema: {theme_name}")
             return
 
         path = self._get_music_path(filename)
@@ -95,11 +100,17 @@ class MusicManager:
 
         try:
             pygame.mixer.music.load(path)
-            pygame.mixer.music.set_volume(self.CLASS_VOLUME)
-            pygame.mixer.music.play(-1, fade_ms=self.FADE_MS)  # -1 = sonsuz loop
-            print(f"[♪] Sinif muzigi baslatildi: {class_name} ({filename})")
+            pygame.mixer.music.set_volume(self.THEME_VOLUME)
+            pygame.mixer.music.play(-1, fade_ms=self.FADE_MS)
+            print(f"[♪] Tema muzigi baslatildi: {theme_name} ({filename})")
         except Exception as e:
             print(f"[!] Muzik calinamadi: {e}")
+
+    # Geriye donuk uyumluluk - eski class-based cagrilar icin
+    def play_class_music(self, class_name: str) -> None:
+        """Eski API uyumlulugu - tema muzigini calar veya sessiz kalir."""
+        if self._current_theme:
+            self.play_theme_music(self._current_theme)
 
     def play_battle_music(self) -> None:
         """Savaş müziğine geçiş yapar (loop)."""
@@ -107,7 +118,7 @@ class MusicManager:
             return
 
         if self._is_battle_playing:
-            return  # Zaten savas muzigi caliyorsa tekrar baslatma
+            return
 
         path = self._get_music_path(self.BATTLE_MUSIC)
         if not path:
@@ -115,7 +126,6 @@ class MusicManager:
 
         try:
             pygame.mixer.music.fadeout(self.FADE_MS)
-            # Fadeout bitmesini beklemeden yükle (pygame bunu yönetir)
             pygame.mixer.music.load(path)
             pygame.mixer.music.set_volume(self.BATTLE_VOLUME)
             pygame.mixer.music.play(-1, fade_ms=self.FADE_MS)
@@ -125,17 +135,17 @@ class MusicManager:
             print(f"[!] Savas muzigi calinamadi: {e}")
 
     def resume_class_music(self) -> None:
-        """Savaş bittikten sonra sınıf müziğine geri döner."""
+        """Savaş bittikten sonra tema müziğine geri döner."""
         if not self._initialized:
             return
 
         if not self._is_battle_playing:
-            return  # Zaten sinif muzigi caliyorsa bir sey yapma
+            return
 
-        if self._current_class:
+        if self._current_theme:
             self._is_battle_playing = False
-            self.play_class_music(self._current_class)
-            print(f"[♪] Sinif muzigine geri donuldu: {self._current_class}")
+            self.play_theme_music(self._current_theme)
+            print(f"[♪] Tema muzigine geri donuldu: {self._current_theme}")
 
     def stop(self) -> None:
         """Müziği durdurur."""

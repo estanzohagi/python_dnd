@@ -484,11 +484,26 @@ class GameState:
             for stat_key, stat_val in w_stats.get("stats", {}).items():
                 if stat_key in total:
                     total[stat_key] += stat_val
+                elif stat_key == "HP":
+                    # HP bonusu max_hp'ye eklenir
+                    pass  # HP ayri islenir
         # Event bonuslari
         for stat_key, stat_val in self.character.event_stats.items():
             if stat_key in total:
                 total[stat_key] += stat_val
         return total
+
+    def get_hp_bonus_from_equipment(self) -> int:
+        """Equipped zirhlardan gelen toplam HP bonusunu hesaplar."""
+        hp_bonus = 0
+        for weapon in self.equipped_items:
+            w_stats = self.get_weapon_stats(weapon)
+            hp_bonus += w_stats.get("stats", {}).get("HP", 0)
+        return hp_bonus
+
+    def get_effective_max_hp(self) -> int:
+        """Zirh HP bonusu dahil efektif max HP."""
+        return self.character.max_hp + self.get_hp_bonus_from_equipment()
 
     def get_stat_breakdown(self, stat_key: str) -> Dict[str, int]:
         """Belirli bir stat'in kaynaklarini dondurur (base, weapon, event)."""
@@ -509,25 +524,76 @@ class GameState:
     def get_stat_effect_on_combat(self) -> Dict[str, float]:
         """
         Istatistiklerin savas uzerindeki etkilerini hesaplar.
-        Returns dict with multipliers/bonuses:
-          attack_bonus: STR bazli ek hasar
-          magic_bonus: INT bazli ek hasar
-          defense_reduction: DEF bazli hasar azaltma orani
-          dodge_chance: DEX bazli kacinma sansi
-          crit_bonus: LUCK bazli kritik sans artisi
-          extra_turn_bonus: LUCK bazli ekstra tur sans artisi
-          flee_bonus: DEX bazli kacis sans artisi
+        Stat cap: 200 (formüller buna göre ölçeklendi).
         """
         total = self.get_total_stats()
         return {
-            "attack_bonus": max(0, (total.get("STR", 10) - 10) // 2),
-            "magic_bonus": max(0, (total.get("INT", 10) - 10) // 2),
-            "defense_reduction": min(0.5, total.get("DEF", 10) * 0.015),
-            "dodge_chance": min(0.25, (total.get("DEX", 10) - 10) * 0.02),
-            "crit_bonus": min(10.0, (total.get("LUCK", 10) - 10) * 0.5),
-            "extra_turn_bonus": min(0.15, (total.get("LUCK", 10) - 10) * 0.01),
-            "flee_bonus": min(15.0, (total.get("DEX", 10) - 10) * 1.5),
+            "attack_bonus": max(0, (total.get("STR", 10) - 10)),
+            "magic_bonus": max(0, (total.get("INT", 10) - 10)),
+            "defense_reduction": min(0.6, total.get("DEF", 10) * 0.003),
+            "dodge_chance": min(0.30, max(0, (total.get("DEX", 10) - 10)) * 0.003),
+            "crit_bonus": min(15.0, max(0, (total.get("LUCK", 10) - 10)) * 0.1),
+            "extra_turn_bonus": min(0.20, max(0, (total.get("LUCK", 10) - 10)) * 0.002),
+            "flee_bonus": min(25.0, max(0, (total.get("DEX", 10) - 10)) * 0.25),
         }
+
+    # ---- SHOP SISTEMI ----
+    SHOP_BASE_COST = 15  # Baslangic fiyati
+    SHOP_ROLL_BASE_COST = 10  # Roll butonu baslangic fiyati
+
+    def init_shop(self) -> None:
+        """Shop'u sifirlar (her savas sonrasi cagrilir)."""
+        import random
+        self._shop_roll_cost = self.SHOP_ROLL_BASE_COST
+        self._shop_items = self._generate_shop_items()
+
+    def _generate_shop_items(self) -> list:
+        """3 rastgele stat arttirma secenegi uretir."""
+        import random
+        stat_keys = ["STR", "DEX", "INT", "DEF", "LUCK"]
+        items = []
+        for _ in range(3):
+            sk = random.choice(stat_keys)
+            amount = random.randint(2, 6)
+            cost = self.SHOP_BASE_COST + amount * 3
+            items.append({"stat": sk, "amount": amount, "cost": cost})
+        return items
+
+    def get_shop_items(self) -> list:
+        """Mevcut shop seceneklerini dondurur."""
+        if not hasattr(self, '_shop_items'):
+            self.init_shop()
+        return self._shop_items
+
+    def get_shop_roll_cost(self) -> int:
+        """Roll butonunun mevcut maliyetini dondurur."""
+        if not hasattr(self, '_shop_roll_cost'):
+            self._shop_roll_cost = self.SHOP_ROLL_BASE_COST
+        return self._shop_roll_cost
+
+    def shop_buy(self, index: int) -> bool:
+        """Shop'tan stat satin alir. Basarili ise True."""
+        items = self.get_shop_items()
+        if index < 0 or index >= len(items):
+            return False
+        item = items[index]
+        if self.character.gold < item["cost"]:
+            return False
+        self.character.gold -= item["cost"]
+        self.apply_event_stat(item["stat"], item["amount"])
+        print(f"[SHOP] {item['stat']} +{item['amount']} satin alindi ({item['cost']} altin)")
+        return True
+
+    def shop_roll(self) -> bool:
+        """Shop seceneklerini yeniler. Maliyet her seferinde 2x artar."""
+        cost = self.get_shop_roll_cost()
+        if self.character.gold < cost:
+            return False
+        self.character.gold -= cost
+        self._shop_roll_cost = cost * 2
+        self._shop_items = self._generate_shop_items()
+        print(f"[SHOP] Roll yapildi ({cost} altin). Yeni maliyet: {self._shop_roll_cost}")
+        return True
 
     def modify_hp(self, amount: int) -> None:
         """
@@ -557,23 +623,41 @@ class GameState:
         self.equipped_items = [weapon]  # Ilk silahi equip et
 
     def get_weapon_stats(self, weapon: str = "") -> dict:
-        """Silah istatistiklerini dondurur. Bilinmeyen silahlar icin otomatik uretir."""
+        """Silah istatistiklerini dondurur. Bilinmeyen silahlar icin isimden tahmin eder."""
         if not weapon:
             weapon = self.equipped_weapon
         stats = self.WEAPON_STATS.get(weapon)
         if stats:
             return stats
         # AI tarafindan verilen dinamik silah - isimden tahmin et
+        import hashlib
         weapon_lower = weapon.lower()
         magic_keywords = ("asa", "degnek", "grimoire", "buyu", "ates", "buz",
                           "yildirim", "isik", "karanlik", "ruh", "lanetli",
                           "zehir", "sihirli")
+        armor_keywords = ("zirh", "kalkan", "miğfer", "migfer", "pelerini",
+                          "pelerin", "koruma", "yelek", "eldiven", "cizme",
+                          "kask", "armor", "shield")
         is_magic = any(kw in weapon_lower for kw in magic_keywords)
-        # Dinamik silahlar genelde iyi olur (odul oldugu icin)
-        if is_magic:
-            return {"bonus": 8, "type": "buyusel", "stats": {"INT": 4, "LUCK": 1}}
+        is_armor = any(kw in weapon_lower for kw in armor_keywords)
+        # Deterministik seed (aynı isim her zaman aynı statları verir)
+        h = int(hashlib.md5(weapon.encode()).hexdigest()[:8], 16)
+        if is_armor:
+            # Zırh: HP ve DEF bonusu, düşük hasar
+            hp_bonus = 5 + (h % 20)
+            def_val = 3 + (h % 8)
+            return {"bonus": 1 + (h % 3), "type": "fiziksel",
+                    "stats": {"DEF": def_val, "HP": hp_bonus}}
+        elif is_magic:
+            int_val = 3 + (h % 6)
+            luck_val = -1 + (h % 4)
+            return {"bonus": 5 + (h % 8), "type": "buyusel",
+                    "stats": {"INT": int_val, "LUCK": luck_val}}
         else:
-            return {"bonus": 8, "type": "fiziksel", "stats": {"STR": 3, "DEX": 2}}
+            str_val = 2 + (h % 6)
+            dex_val = -1 + (h % 4)
+            return {"bonus": 4 + (h % 8), "type": "fiziksel",
+                    "stats": {"STR": str_val, "DEX": dex_val}}
 
     def get_class_bonus(self) -> dict:
         """Karakter sinifinin bonus verilerini dondurur."""
@@ -591,18 +675,14 @@ class GameState:
                         "Ip", "Canta", "Kitap", "Mum"}
 
     def get_combat_weapons(self) -> list:
-        """Equip edilmis savas silahlarini dondurur (max 4)."""
+        """Equip edilmis savas silahlarini dondurur (max 4). Silah yoksa bos liste."""
         # Envanterde olmayanları equipped'dan cikar
         self.equipped_items = [w for w in self.equipped_items
                                if w in self.character.inventory]
         if self.equipped_items:
             return self.equipped_items[:4]
-        # Fallback: envanterdeki ilk silahi equip et
-        for item in self.character.inventory:
-            if item not in self.NON_WEAPON_ITEMS:
-                self.equipped_items.append(item)
-                return [item]
-        return ["Yumruk"]
+        # Silah equip edilmemisse bos liste dondur (silahsiz savas)
+        return []
 
     def get_all_weapons(self) -> list:
         """Envanterdeki tum silahları dondurur (equip durumundan bagimsiz)."""
@@ -737,10 +817,12 @@ class GameState:
             "   - Zar sonucu (1-20) oyuncu tarafindan atilacak ve sana iletilecek. Sonuca gore hikayeyi sekillendir.\n"
             "   - Yuksek zar (15-20): Tam basari. Dusuk zar (1-5): Feci basarisizlik. Orta (6-14): Kismi basari/basarisizlik.\n"
             "14. ESYA SISTEMI (ONEMLI):\n"
-            "   - yeni_esya: Oyuncuya sunulacak yeni silah veya esya adi. Bos birakmayi tercih et, sadece ozel durumlarda ver.\n"
-            "   - KRITIK: yeni_esya'yi verdiginde oyuncu bunu OTOMATIK ALMAZ. Oyuncuya seceneklerde 'Ganimeti Al' veya benzer bir secenek sun.\n"
-            "   - Savas kazanildiktan sonra %30 ihtimalle dusmandan dusecek bir silah ver (ornek: 'Ates Kilici', 'Buzlu Balta').\n"
-            "   - Seceneklerde ganimeti alma ve reddetme secenegi olmali. Ornek: sol_ust='Ganimeti al', sag_ust='Birak ve devam et'.\n"
+            "   - yeni_esya: Oyuncuya sunulacak yeni silah, zirh veya esya adi. Bos birakmayi tercih et, sadece ozel durumlarda ver.\n"
+            "   - KRITIK: yeni_esya'yi verdiginde oyuncu bunu OTOMATIK ALMAZ. Seceneklerde 'Ganimeti Al' sun.\n"
+            "   - Savas kazanildiktan sonra %30 ihtimalle dusmandan silah veya zirh ver.\n"
+            "   - Zirh isimleri: 'Demir Zirh', 'Ejderha Kalkani', 'Ates Pelerini' gibi olsun. Zirhlar HP ve DEF verir.\n"
+            "   - Silahlar: 'Ates Kilici', 'Buzlu Balta' gibi. Silahlar STR/INT/DEX verir.\n"
+            "   - Her esya FARKLI istatistiklere sahip olmali. Monoton olma.\n"
             "   - Verilen silahlar tematik olsun (Buzul Sarayi'nda 'Buz Kilici', Ruhlar Cehennemi'nde 'Lanetli Balta' gibi).\n"
             "   - Ayni esyayi tekrar verme. Envantere bak ve farkli seyler ver.\n"
             "15. ISTATISTIK SISTEMI (stat_degisim):\n"

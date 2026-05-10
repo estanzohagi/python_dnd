@@ -661,255 +661,220 @@ class GameUI:
                        hovered_devam: bool = False,
                        dwell_progress: float = 0.0,
                        total_stats: dict = None,
-                       stat_names: dict = None) -> Tuple[np.ndarray, dict]:
-        """
-        Envanter ekranini cizer (istatistik panelli).
-
-        Returns:
-            (frame, regions) - regions dict:
-                'items': [(item_name, (x1,y1,x2,y2)), ...]
-                'devam': (x1,y1,x2,y2) or None
-                'prev': (x1,y1,x2,y2) or None
-                'next': (x1,y1,x2,y2) or None
-        """
+                       stat_names: dict = None,
+                       shop_items: list = None,
+                       shop_roll_cost: int = 0,
+                       gold: int = 0,
+                       hovered_shop: int = -1,
+                       hovered_roll: bool = False,
+                       hovered_prev: bool = False,
+                       hovered_next: bool = False) -> Tuple[np.ndarray, dict]:
+        """Envanter ekranini cizer (istatistik panelli + shop)."""
         if total_stats is None:
             total_stats = {}
         if stat_names is None:
             stat_names = {"STR": "Guc", "DEX": "Cevik", "INT": "Zeka",
                           "DEF": "Savun", "LUCK": "Sans"}
+        if shop_items is None:
+            shop_items = []
 
-        # Koyu overlay
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, 0), (self.w, self.h), (10, 10, 15), -1)
         frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
 
-        regions = {'items': [], 'devam': None, 'prev': None, 'next': None}
+        regions = {'items': [], 'devam': None, 'prev': None, 'next': None,
+                   'shop': [], 'roll': None}
+        margin = 20
+        top_y = 10
+        ix1, ix2 = margin, self.w - margin
 
-        margin = 30
-        top_y = 20
-
-        # ---- DEVAM ET BUTONU (SAG UST KOSE - BUYUK) ----
-        devam_w = 200
-        devam_h = 60
-        devam_x1 = self.w - devam_w - margin
-        devam_x2 = devam_x1 + devam_w
-        devam_y1 = top_y + 10
-        devam_y2 = devam_y1 + devam_h
-
-        dv_color = self.COLOR_DEVAM_HOVER if hovered_devam else self.COLOR_DEVAM_BG
-        overlay5 = frame.copy()
-        cv2.rectangle(overlay5, (devam_x1, devam_y1), (devam_x2, devam_y2),
-                      dv_color, -1)
-        frame = cv2.addWeighted(overlay5, 0.8, frame, 0.2, 0)
-        dv_border = (100, 255, 150) if hovered_devam else (80, 160, 100)
-        cv2.rectangle(frame, (devam_x1, devam_y1), (devam_x2, devam_y2),
-                      dv_border, 2)
-
-        devam_text = "DEVAM ET"
-        (dtw, dth), _ = cv2.getTextSize(devam_text, self.FONT_BOLD, 0.9, 2)
-        cv2.putText(frame, devam_text,
-                    (devam_x1 + (devam_w - dtw) // 2, devam_y1 + (devam_h + dth) // 2),
-                    self.FONT_BOLD, 0.9, self.COLOR_TEXT_WHITE, 2, cv2.LINE_AA)
-
-        # Dwell progress (devam butonu)
+        # ---- DEVAM ET (SAG UST) ----
+        ddw, ddh = 180, 50
+        ddx1 = self.w - ddw - margin
+        ddx2, ddy1, ddy2 = ddx1+ddw, top_y+5, top_y+5+ddh
+        dvc = self.COLOR_DEVAM_HOVER if hovered_devam else self.COLOR_DEVAM_BG
+        ov = frame.copy()
+        cv2.rectangle(ov, (ddx1,ddy1), (ddx2,ddy2), dvc, -1)
+        frame = cv2.addWeighted(ov, 0.8, frame, 0.2, 0)
+        dvb = (100,255,150) if hovered_devam else (80,160,100)
+        cv2.rectangle(frame, (ddx1,ddy1), (ddx2,ddy2), dvb, 2)
+        dtxt = "DEVAM ET"
+        (dtw,dth2),_ = cv2.getTextSize(dtxt, self.FONT_BOLD, 0.85, 2)
+        cv2.putText(frame, dtxt, (ddx1+(ddw-dtw)//2, ddy1+(ddh+dth2)//2),
+                    self.FONT_BOLD, 0.85, self.COLOR_TEXT_WHITE, 2, cv2.LINE_AA)
         if hovered_devam and 0 < dwell_progress < 1.0:
-            bar_w = int(devam_w * dwell_progress)
-            cv2.rectangle(frame, (devam_x1, devam_y2 - 5),
-                          (devam_x1 + bar_w, devam_y2),
-                          self.COLOR_PROGRESS_BAR, -1)
+            bw = int(ddw * dwell_progress)
+            cv2.rectangle(frame, (ddx1,ddy2-4), (ddx1+bw,ddy2), self.COLOR_PROGRESS_BAR, -1)
+        regions['devam'] = (ddx1, ddy1, ddx2, ddy2)
 
-        regions['devam'] = (devam_x1, devam_y1, devam_x2, devam_y2)
+        # ---- BASLIK ----
+        ec = len(equipped_items)
+        cv2.putText(frame, "ENVANTER", (margin, top_y+30),
+                    self.FONT_BOLD, 1.1, self.COLOR_TITLE, 2, cv2.LINE_AA)
+        sub = sanitize_text(f"Silah sec ({ec}/4) | Altin: {gold}")
+        cv2.putText(frame, sub, (margin, top_y+52),
+                    self.FONT, 0.55, self.COLOR_TEXT_GOLD, 1, cv2.LINE_AA)
 
-        # ---- BASLIK (sol tarafa) ----
-        equip_count = len(equipped_items)
-        title = "ENVANTER"
-        subtitle = sanitize_text(f"Savas icin silah sec ({equip_count}/4)")
-        (tw, _), _ = cv2.getTextSize(title, self.FONT_BOLD, 1.3, 3)
-        cv2.putText(frame, title, (margin, top_y + 35),
-                    self.FONT_BOLD, 1.3, self.COLOR_TITLE, 3, cv2.LINE_AA)
-        cv2.putText(frame, subtitle, (margin, top_y + 65),
-                    self.FONT, 0.65, self.COLOR_TEXT_GOLD, 1, cv2.LINE_AA)
-
-        # ---- ISTATISTIK PANELI (ust kisim, basligin altinda) ----
-        stat_panel_y = top_y + 80
-        stat_panel_h = 45
+        # ---- STAT PANELI ----
+        spy = top_y + 60
+        sph = 38
         if total_stats:
-            # Stat kutusu arka plani
-            stat_bg_overlay = frame.copy()
-            cv2.rectangle(stat_bg_overlay, (margin, stat_panel_y),
-                          (self.w - margin, stat_panel_y + stat_panel_h),
-                          (25, 25, 35), -1)
-            frame = cv2.addWeighted(stat_bg_overlay, 0.7, frame, 0.3, 0)
-            cv2.rectangle(frame, (margin, stat_panel_y),
-                          (self.w - margin, stat_panel_y + stat_panel_h),
-                          (60, 60, 80), 1)
-
-            # Stat degerlerini ciz
-            stat_keys = ["STR", "DEX", "INT", "DEF", "LUCK"]
-            stat_colors = {
-                "STR": (100, 100, 255),   # Kirmizi
-                "DEX": (100, 255, 100),   # Yesil
-                "INT": (255, 180, 80),    # Mavi
-                "DEF": (200, 200, 100),   # Cyan
-                "LUCK": (150, 130, 255),  # Mor
-            }
-            available_w = self.w - margin * 2 - 10
-            stat_w = available_w // len(stat_keys)
-            for i, sk in enumerate(stat_keys):
+            ov2 = frame.copy()
+            cv2.rectangle(ov2, (margin,spy), (self.w-margin,spy+sph), (25,25,35), -1)
+            frame = cv2.addWeighted(ov2, 0.7, frame, 0.3, 0)
+            cv2.rectangle(frame, (margin,spy), (self.w-margin,spy+sph), (60,60,80), 1)
+            sks = ["STR","DEX","INT","DEF","LUCK"]
+            scs = {"STR":(100,100,255),"DEX":(100,255,100),"INT":(255,180,80),
+                   "DEF":(200,200,100),"LUCK":(150,130,255)}
+            aww = self.w - margin*2 - 10
+            sww = aww // len(sks)
+            for i, sk in enumerate(sks):
                 val = total_stats.get(sk, 10)
-                name = stat_names.get(sk, sk)
-                color = stat_colors.get(sk, self.COLOR_TEXT_WHITE)
-                sx = margin + 10 + i * stat_w
-                sy = stat_panel_y + 18
+                nm = stat_names.get(sk, sk)
+                cl = scs.get(sk, self.COLOR_TEXT_WHITE)
+                sx = margin + 5 + i * sww
+                sy = spy + 15
+                cv2.putText(frame, nm, (sx,sy), self.FONT, 0.4, self.COLOR_LABEL, 1, cv2.LINE_AA)
+                vt = str(val)
+                (vw,_),_ = cv2.getTextSize(vt, self.FONT_BOLD, 0.6, 2)
+                cv2.putText(frame, vt, (sx,sy+18), self.FONT_BOLD, 0.6, cl, 2, cv2.LINE_AA)
+                bx = sx+vw+5
+                by = sy+9
+                bmw = max(10, sww-vw-18)
+                bf = min(int(bmw*val/200), bmw)
+                cv2.rectangle(frame, (bx,by), (bx+bmw,by+6), (30,30,40), -1)
+                cv2.rectangle(frame, (bx,by), (bx+bf,by+6), cl, -1)
 
-                # Stat ismi
-                cv2.putText(frame, name, (sx, sy),
-                            self.FONT, 0.5, self.COLOR_LABEL, 1, cv2.LINE_AA)
-                # Stat degeri
-                val_text = str(val)
-                (vw, _), _ = cv2.getTextSize(val_text, self.FONT_BOLD, 0.7, 2)
-                cv2.putText(frame, val_text, (sx, sy + 22),
-                            self.FONT_BOLD, 0.7, color, 2, cv2.LINE_AA)
+        # ---- ITEMS ----
+        tw = len(all_weapons)
+        ipp = 5
+        tp = max(1, (tw+ipp-1)//ipp)
+        page = min(page, tp-1)
+        si2 = page*ipp
+        ei = min(si2+ipp, tw)
+        pw = all_weapons[si2:ei]
 
-                # Mini bar (gorsel gosterge, max 25'e normalize)
-                bar_x = sx + vw + 8
-                bar_y_top = sy + 12
-                bar_max_w = stat_w - vw - 25
-                bar_fill = min(int(bar_max_w * val / 25), bar_max_w)
-                cv2.rectangle(frame, (bar_x, bar_y_top), (bar_x + bar_max_w, bar_y_top + 8),
-                              (30, 30, 40), -1)
-                cv2.rectangle(frame, (bar_x, bar_y_top), (bar_x + bar_fill, bar_y_top + 8),
-                              color, -1)
+        iat = spy + sph + 8
+        ih, ig = 46, 3
 
-        # ---- SAYFALAMA ----
-        total_weapons = len(all_weapons)
-        total_pages = max(1, (total_weapons + self.ITEMS_PER_PAGE - 1) // self.ITEMS_PER_PAGE)
-        page = min(page, total_pages - 1)
-        start_idx = page * self.ITEMS_PER_PAGE
-        end_idx = min(start_idx + self.ITEMS_PER_PAGE, total_weapons)
-        page_weapons = all_weapons[start_idx:end_idx]
-
-        # ---- ITEM SATIRLARI ----
-        item_area_top = stat_panel_y + stat_panel_h + 12
-        item_h = 55
-        item_gap = 6
-        item_x1 = margin
-        item_x2 = self.w - margin
-
-        for i, weapon in enumerate(page_weapons):
-            global_idx = start_idx + i
-            y1 = item_area_top + i * (item_h + item_gap)
-            y2 = y1 + item_h
-
-            is_equipped = weapon in equipped_items
-            is_hovered = (hovered_idx == i)
-
-            # Arka plan
-            bg_color = self.COLOR_ITEM_HOVER if is_hovered else self.COLOR_ITEM_BG
-            overlay2 = frame.copy()
-            cv2.rectangle(overlay2, (item_x1, y1), (item_x2, y2), bg_color, -1)
-            frame = cv2.addWeighted(overlay2, 0.7, frame, 0.3, 0)
-
-            # Cerceve
-            border_c = self.COLOR_EQUIPPED if is_equipped else (80, 80, 80)
-            thick = 2 if is_equipped else 1
-            cv2.rectangle(frame, (item_x1, y1), (item_x2, y2), border_c, thick)
-
-            # Equip ikonu
-            icon_x = item_x1 + 15
-            icon_y = y1 + item_h // 2
-            if is_equipped:
-                cv2.putText(frame, "[E]", (icon_x, icon_y + 8),
-                            self.FONT_BOLD, 0.65, self.COLOR_EQUIPPED, 2, cv2.LINE_AA)
+        for i, weapon in enumerate(pw):
+            y1 = iat + i*(ih+ig)
+            y2 = y1+ih
+            is_eq = weapon in equipped_items
+            is_hov = (hovered_idx == i)
+            bg = self.COLOR_ITEM_HOVER if is_hov else self.COLOR_ITEM_BG
+            ov3 = frame.copy()
+            cv2.rectangle(ov3, (ix1,y1), (ix2,y2), bg, -1)
+            frame = cv2.addWeighted(ov3, 0.7, frame, 0.3, 0)
+            bc = self.COLOR_EQUIPPED if is_eq else (80,80,80)
+            cv2.rectangle(frame, (ix1,y1), (ix2,y2), bc, 2 if is_eq else 1)
+            icx = ix1+12
+            icy = y1+ih//2
+            if is_eq:
+                cv2.putText(frame, "[E]", (icx,icy+6), self.FONT_BOLD, 0.5, self.COLOR_EQUIPPED, 2, cv2.LINE_AA)
             else:
-                cv2.putText(frame, "[ ]", (icon_x, icon_y + 8),
-                            self.FONT, 0.6, self.COLOR_UNEQUIPPED, 1, cv2.LINE_AA)
-
-            # Silah adi
-            weapon_text = sanitize_text(weapon)
-            cv2.putText(frame, weapon_text, (icon_x + 55, icon_y),
-                        self.FONT, 0.65, self.COLOR_TEXT_WHITE, 2, cv2.LINE_AA)
-
-            # Stat bilgisi (sag tarafa) - bonus + tip + stat bonuslari
+                cv2.putText(frame, "[ ]", (icx,icy+6), self.FONT, 0.45, self.COLOR_UNEQUIPPED, 1, cv2.LINE_AA)
+            wt = sanitize_text(weapon)
+            cv2.putText(frame, wt, (icx+42,icy+2), self.FONT, 0.5, self.COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
             stats = weapon_stats_fn(weapon)
             bonus = stats.get("bonus", 0)
             wtype = stats.get("type", "fiziksel")
             w_stats = stats.get("stats", {})
-            type_short = "BYS" if wtype == "buyusel" else "FZK"
-
-            # Stat bonus ozeti
-            stat_parts = []
+            ts = "BYS" if wtype == "buyusel" else "FZK"
+            parts = []
             for sk, sv in w_stats.items():
-                if sv > 0:
-                    stat_parts.append(f"+{sv}{sk}")
-                elif sv < 0:
-                    stat_parts.append(f"{sv}{sk}")
-            stat_str = " ".join(stat_parts) if stat_parts else ""
+                if sv > 0: parts.append(f"+{sv}{sk}")
+                elif sv < 0: parts.append(f"{sv}{sk}")
+            info = f"+{bonus}{ts} {' '.join(parts)}"
+            sc = (180,140,255) if wtype == "buyusel" else (255,180,100)
+            (iw,_),_ = cv2.getTextSize(info, self.FONT, 0.38, 1)
+            cv2.putText(frame, info, (ix2-iw-8,icy+2), self.FONT, 0.38, sc, 1, cv2.LINE_AA)
+            if is_hov and 0 < dwell_progress < 1.0:
+                bww = int((ix2-ix1-8)*dwell_progress)
+                cv2.rectangle(frame, (ix1+4,y2-3), (ix1+4+bww,y2), self.COLOR_PROGRESS_BAR, -1)
+            regions['items'].append((weapon, (ix1, y1, ix2, y2)))
 
-            # Hasar bonusu
-            dmg_text = f"+{bonus} {type_short}"
-            stat_color = (180, 140, 255) if wtype == "buyusel" else (255, 180, 100)
-            (stw, _), _ = cv2.getTextSize(dmg_text, self.FONT, 0.5, 1)
-            cv2.putText(frame, dmg_text, (item_x2 - stw - 15, icon_y - 2),
-                        self.FONT, 0.5, stat_color, 1, cv2.LINE_AA)
-
-            # Stat bonuslari (alt satir)
-            if stat_str:
-                (ssw, _), _ = cv2.getTextSize(stat_str, self.FONT, 0.45, 1)
-                cv2.putText(frame, stat_str, (item_x2 - ssw - 15, icon_y + 15),
-                            self.FONT, 0.45, (150, 200, 150), 1, cv2.LINE_AA)
-
-            # Dwell progress
-            if is_hovered and 0 < dwell_progress < 1.0:
-                bar_y = y2 - 5
-                bar_w = int((item_x2 - item_x1 - 10) * dwell_progress)
-                cv2.rectangle(frame, (item_x1 + 5, bar_y),
-                              (item_x1 + 5 + bar_w, bar_y + 4),
-                              self.COLOR_PROGRESS_BAR, -1)
-
-            # Region kaydet
-            regions['items'].append((weapon, (item_x1, y1, item_x2, y2)))
-
-        # ---- SAYFA NAVIGASYONU ----
-        nav_y = item_area_top + self.ITEMS_PER_PAGE * (item_h + item_gap) + 5
-        page_text = f"Sayfa {page + 1}/{total_pages}"
-        (ptw, _), _ = cv2.getTextSize(page_text, self.FONT, 0.6, 1)
-        cv2.putText(frame, page_text, ((self.w - ptw) // 2, nav_y + 20),
-                    self.FONT, 0.6, self.COLOR_LABEL, 1, cv2.LINE_AA)
-
-        if total_pages > 1:
+        # ---- SAYFA NAV ----
+        nav_y = iat + ipp*(ih+ig)
+        if tp > 1:
+            pgt = f"{page+1}/{tp}"
+            (pgw,_),_ = cv2.getTextSize(pgt, self.FONT, 0.45, 1)
+            cv2.putText(frame, pgt, ((self.w-pgw)//2, nav_y+16), self.FONT, 0.45, self.COLOR_LABEL, 1, cv2.LINE_AA)
             if page > 0:
-                prev_x1, prev_x2 = margin, margin + 120
-                prev_y1, prev_y2 = nav_y, nav_y + 35
-                overlay3 = frame.copy()
-                cv2.rectangle(overlay3, (prev_x1, prev_y1), (prev_x2, prev_y2),
-                              (60, 60, 80), -1)
-                frame = cv2.addWeighted(overlay3, 0.6, frame, 0.4, 0)
-                cv2.rectangle(frame, (prev_x1, prev_y1), (prev_x2, prev_y2),
-                              self.COLOR_BORDER, 1)
-                cv2.putText(frame, "< Onceki", (prev_x1 + 10, prev_y1 + 24),
-                            self.FONT, 0.55, self.COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
-                regions['prev'] = (prev_x1, prev_y1, prev_x2, prev_y2)
+                px1,px2,py1,py2 = margin,margin+100,nav_y,nav_y+26
+                pc = (80,100,140) if hovered_prev else (50,50,70)
+                ov4 = frame.copy()
+                cv2.rectangle(ov4, (px1,py1), (px2,py2), pc, -1)
+                frame = cv2.addWeighted(ov4, 0.7, frame, 0.3, 0)
+                cv2.rectangle(frame, (px1,py1), (px2,py2), self.COLOR_BORDER, 1)
+                cv2.putText(frame, "< Onceki", (px1+6,py1+18), self.FONT, 0.45, self.COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+                regions['prev'] = (px1,py1,px2,py2)
+                if hovered_prev and 0 < dwell_progress < 1.0:
+                    bww = int(100*dwell_progress)
+                    cv2.rectangle(frame, (px1,py2-3), (px1+bww,py2), self.COLOR_PROGRESS_BAR, -1)
+            if page < tp-1:
+                nx2 = self.w-margin
+                nx1,ny1,ny2 = nx2-100,nav_y,nav_y+26
+                nc = (80,100,140) if hovered_next else (50,50,70)
+                ov5 = frame.copy()
+                cv2.rectangle(ov5, (nx1,ny1), (nx2,ny2), nc, -1)
+                frame = cv2.addWeighted(ov5, 0.7, frame, 0.3, 0)
+                cv2.rectangle(frame, (nx1,ny1), (nx2,ny2), self.COLOR_BORDER, 1)
+                cv2.putText(frame, "Sonraki >", (nx1+6,ny1+18), self.FONT, 0.45, self.COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
+                regions['next'] = (nx1,ny1,nx2,ny2)
+                if hovered_next and 0 < dwell_progress < 1.0:
+                    bww = int(100*dwell_progress)
+                    cv2.rectangle(frame, (nx1,ny2-3), (nx1+bww,ny2), self.COLOR_PROGRESS_BAR, -1)
+            nav_y += 30
+        else:
+            nav_y += 2
 
-            if page < total_pages - 1:
-                next_x2 = self.w - margin
-                next_x1 = next_x2 - 120
-                next_y1, next_y2 = nav_y, nav_y + 35
-                overlay4 = frame.copy()
-                cv2.rectangle(overlay4, (next_x1, next_y1), (next_x2, next_y2),
-                              (60, 60, 80), -1)
-                frame = cv2.addWeighted(overlay4, 0.6, frame, 0.4, 0)
-                cv2.rectangle(frame, (next_x1, next_y1), (next_x2, next_y2),
-                              self.COLOR_BORDER, 1)
-                cv2.putText(frame, "Sonraki >", (next_x1 + 10, next_y1 + 24),
-                            self.FONT, 0.55, self.COLOR_TEXT_WHITE, 1, cv2.LINE_AA)
-                regions['next'] = (next_x1, next_y1, next_x2, next_y2)
-
-        # ---- YARDIMCI ESYA SAYISI ----
-        non_weapon_count = len([i for i in all_items if i not in all_weapons])
-        if non_weapon_count > 0:
-            nw_text = sanitize_text(f"Diger esyalar: {non_weapon_count}")
-            cv2.putText(frame, nw_text, (margin, self.h - 15),
-                        self.FONT, 0.5, self.COLOR_LABEL, 1, cv2.LINE_AA)
+        # ---- SHOP ----
+        if shop_items:
+            shop_y = nav_y + 2
+            cv2.putText(frame, "DUKKAN", (margin,shop_y+12), self.FONT_BOLD, 0.55, (50,200,255), 1, cv2.LINE_AA)
+            shop_y += 18
+            sih2,sig2 = 32,3
+            for si, sit in enumerate(shop_items):
+                sy1 = shop_y+si*(sih2+sig2)
+                sy2 = sy1+sih2
+                is_sh = (hovered_shop == si)
+                ca = gold >= sit["cost"]
+                sbg = (60,80,50) if (is_sh and ca) else (35,35,45)
+                ov6 = frame.copy()
+                cv2.rectangle(ov6, (ix1,sy1), (ix2,sy2), sbg, -1)
+                frame = cv2.addWeighted(ov6, 0.7, frame, 0.3, 0)
+                sbc = (80,200,100) if ca else (100,50,50)
+                cv2.rectangle(frame, (ix1,sy1), (ix2,sy2), sbc, 1)
+                snm = stat_names.get(sit["stat"], sit["stat"])
+                scl = {"STR":(100,100,255),"DEX":(100,255,100),"INT":(255,180,80),
+                       "DEF":(200,200,100),"LUCK":(150,130,255)}.get(sit["stat"], self.COLOR_TEXT_WHITE)
+                stxt = f"+{sit['amount']} {snm}"
+                cv2.putText(frame, stxt, (ix1+12,sy1+21), self.FONT_BOLD, 0.5, scl, 1, cv2.LINE_AA)
+                ctxt = f"{sit['cost']}G"
+                ctc = (50,215,255) if ca else (100,100,100)
+                (cww,_),_ = cv2.getTextSize(ctxt, self.FONT, 0.45, 1)
+                cv2.putText(frame, ctxt, (ix2-cww-10,sy1+21), self.FONT, 0.45, ctc, 1, cv2.LINE_AA)
+                if is_sh and 0 < dwell_progress < 1.0:
+                    bww = int((ix2-ix1-8)*dwell_progress)
+                    cv2.rectangle(frame, (ix1+4,sy2-3), (ix1+4+bww,sy2), self.COLOR_PROGRESS_BAR, -1)
+                regions['shop'].append((si, (ix1,sy1,ix2,sy2)))
+            ry1 = shop_y+len(shop_items)*(sih2+sig2)+3
+            ry2 = ry1+28
+            cr = gold >= shop_roll_cost
+            rbg = (80,60,100) if (hovered_roll and cr) else (40,30,55)
+            ov7 = frame.copy()
+            cv2.rectangle(ov7, (ix1,ry1), (ix2,ry2), rbg, -1)
+            frame = cv2.addWeighted(ov7, 0.7, frame, 0.3, 0)
+            rbc = (160,100,255) if cr else (80,50,80)
+            cv2.rectangle(frame, (ix1,ry1), (ix2,ry2), rbc, 1)
+            rtxt = f"ROLL ({shop_roll_cost}G)"
+            (rww,_),_ = cv2.getTextSize(rtxt, self.FONT_BOLD, 0.5, 1)
+            rc = (200,150,255) if cr else (100,80,120)
+            cv2.putText(frame, rtxt, ((self.w-rww)//2,ry1+19), self.FONT_BOLD, 0.5, rc, 1, cv2.LINE_AA)
+            if hovered_roll and 0 < dwell_progress < 1.0:
+                bww = int((ix2-ix1-8)*dwell_progress)
+                cv2.rectangle(frame, (ix1+4,ry2-3), (ix1+4+bww,ry2), self.COLOR_PROGRESS_BAR, -1)
+            regions['roll'] = (ix1,ry1,ix2,ry2)
 
         return frame, regions
