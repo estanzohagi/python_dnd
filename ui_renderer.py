@@ -834,33 +834,41 @@ class GameUI:
             shop_y = nav_y + 2
             cv2.putText(frame, "DUKKAN", (margin,shop_y+12), self.FONT_BOLD, 0.55, (50,200,255), 1, cv2.LINE_AA)
             shop_y += 18
-            sih2,sig2 = 32,3
+            # Yan yana 3 kutu
+            shop_h = 52
+            gap = 6
+            total_w = ix2 - ix1
+            col_w = (total_w - gap * (len(shop_items) - 1)) // max(len(shop_items), 1)
             for si, sit in enumerate(shop_items):
-                sy1 = shop_y+si*(sih2+sig2)
-                sy2 = sy1+sih2
+                sx1 = ix1 + si * (col_w + gap)
+                sx2 = sx1 + col_w
+                sy1 = shop_y
+                sy2 = sy1 + shop_h
                 is_sh = (hovered_shop == si)
                 ca = gold >= sit["cost"]
                 sbg = (60,80,50) if (is_sh and ca) else (35,35,45)
                 ov6 = frame.copy()
-                cv2.rectangle(ov6, (ix1,sy1), (ix2,sy2), sbg, -1)
+                cv2.rectangle(ov6, (sx1,sy1), (sx2,sy2), sbg, -1)
                 frame = cv2.addWeighted(ov6, 0.7, frame, 0.3, 0)
                 sbc = (80,200,100) if ca else (100,50,50)
-                cv2.rectangle(frame, (ix1,sy1), (ix2,sy2), sbc, 1)
+                cv2.rectangle(frame, (sx1,sy1), (sx2,sy2), sbc, 1)
                 snm = stat_names.get(sit["stat"], sit["stat"])
                 scl = {"STR":(100,100,255),"DEX":(100,255,100),"INT":(255,180,80),
                        "DEF":(200,200,100),"LUCK":(150,130,255)}.get(sit["stat"], self.COLOR_TEXT_WHITE)
                 stxt = f"+{sit['amount']} {snm}"
-                cv2.putText(frame, stxt, (ix1+12,sy1+21), self.FONT_BOLD, 0.5, scl, 1, cv2.LINE_AA)
+                (stw,_),_ = cv2.getTextSize(stxt, self.FONT_BOLD, 0.55, 1)
+                cv2.putText(frame, stxt, (sx1+(col_w-stw)//2, sy1+24), self.FONT_BOLD, 0.55, scl, 1, cv2.LINE_AA)
                 ctxt = f"{sit['cost']}G"
                 ctc = (50,215,255) if ca else (100,100,100)
                 (cww,_),_ = cv2.getTextSize(ctxt, self.FONT, 0.45, 1)
-                cv2.putText(frame, ctxt, (ix2-cww-10,sy1+21), self.FONT, 0.45, ctc, 1, cv2.LINE_AA)
+                cv2.putText(frame, ctxt, (sx1+(col_w-cww)//2, sy1+43), self.FONT, 0.45, ctc, 1, cv2.LINE_AA)
                 if is_sh and 0 < dwell_progress < 1.0:
-                    bww = int((ix2-ix1-8)*dwell_progress)
-                    cv2.rectangle(frame, (ix1+4,sy2-3), (ix1+4+bww,sy2), self.COLOR_PROGRESS_BAR, -1)
-                regions['shop'].append((si, (ix1,sy1,ix2,sy2)))
-            ry1 = shop_y+len(shop_items)*(sih2+sig2)+3
-            ry2 = ry1+28
+                    bww = int((sx2-sx1-4)*dwell_progress)
+                    cv2.rectangle(frame, (sx1+2,sy2-4), (sx1+2+bww,sy2-1), self.COLOR_PROGRESS_BAR, -1)
+                regions['shop'].append((si, (sx1,sy1,sx2,sy2)))
+            # Roll butonu (alt kisim, tam genislik)
+            ry1 = shop_y + shop_h + 5
+            ry2 = ry1 + 32
             cr = gold >= shop_roll_cost
             rbg = (80,60,100) if (hovered_roll and cr) else (40,30,55)
             ov7 = frame.copy()
@@ -868,10 +876,10 @@ class GameUI:
             frame = cv2.addWeighted(ov7, 0.7, frame, 0.3, 0)
             rbc = (160,100,255) if cr else (80,50,80)
             cv2.rectangle(frame, (ix1,ry1), (ix2,ry2), rbc, 1)
-            rtxt = f"ROLL ({shop_roll_cost}G)"
+            rtxt = f"ROLL - Yenile ({shop_roll_cost}G)"
             (rww,_),_ = cv2.getTextSize(rtxt, self.FONT_BOLD, 0.5, 1)
             rc = (200,150,255) if cr else (100,80,120)
-            cv2.putText(frame, rtxt, ((self.w-rww)//2,ry1+19), self.FONT_BOLD, 0.5, rc, 1, cv2.LINE_AA)
+            cv2.putText(frame, rtxt, ((self.w-rww)//2,ry1+21), self.FONT_BOLD, 0.5, rc, 1, cv2.LINE_AA)
             if hovered_roll and 0 < dwell_progress < 1.0:
                 bww = int((ix2-ix1-8)*dwell_progress)
                 cv2.rectangle(frame, (ix1+4,ry2-3), (ix1+4+bww,ry2), self.COLOR_PROGRESS_BAR, -1)

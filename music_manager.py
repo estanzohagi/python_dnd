@@ -7,12 +7,16 @@ Savas modunda ortak savas muzigi calar, savastan cikinca
 tema muzigine geri doner.
 
 Beklenen dosya yapisi (music/ klasoru):
-  music/karanlik_orman.mp3
-  music/kayip_sehir.mp3
-  music/buzul_sarayi.mp3
-  music/lanetli_zindan.mp3
-  music/ejderha_daglari.mp3
+  music/karanlik_magara.mp3
+  music/gizemli_orman.mp3
+  music/kaotik_uzay.mp3
   music/ruhlar_cehennemi.mp3
+  music/sonsuz_col.mp3
+  music/batan_sehir.mp3
+  music/ejderha_yuvasi.mp3
+  music/buzul_sarayi.mp3
+  music/hayalet_kasabasi.mp3
+  music/lanetli_kale.mp3
   music/savas.mp3
 """
 
@@ -33,19 +37,23 @@ class MusicManager:
 
     Kullanım:
         manager = MusicManager()
-        manager.play_theme_music("Karanlik Orman")   # Tema müziği başlat
-        manager.play_battle_music()                   # Savaş müziğine geç
-        manager.resume_class_music()                  # Tema müziğine geri dön
+        manager.play_theme_music("Karanlik Magara")   # Tema müziği başlat
+        manager.play_battle_music()                    # Savaş müziğine geç
+        manager.resume_class_music()                   # Tema müziğine geri dön
     """
 
-    # Tema -> müzik dosyası eşlemesi
+    # Tema -> müzik dosyası eşlemesi (tum POSSIBLE_LOCATIONS)
     THEME_MUSIC = {
-        "Karanlik Orman": "karanlik_orman.mp3",
-        "Kayip Sehir": "kayip_sehir.mp3",
-        "Buzul Sarayi": "buzul_sarayi.mp3",
-        "Lanetli Zindan": "lanetli_zindan.mp3",
-        "Ejderha Daglari": "ejderha_daglari.mp3",
+        "Karanlik Magara": "karanlik_magara.mp3",
+        "Gizemli Orman": "gizemli_orman.mp3",
+        "Kaotik Uzay": "kaotik_uzay.mp3",
         "Ruhlar Cehennemi": "ruhlar_cehennemi.mp3",
+        "Sonsuz Col": "sonsuz_col.mp3",
+        "Batan Sehir": "batan_sehir.mp3",
+        "Ejderha Yuvasi": "ejderha_yuvasi.mp3",
+        "Buzul Sarayi": "buzul_sarayi.mp3",
+        "Hayalet Kasabasi": "hayalet_kasabasi.mp3",
+        "Lanetli Kale": "lanetli_kale.mp3",
     }
 
     BATTLE_MUSIC = "savas.mp3"
