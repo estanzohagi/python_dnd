@@ -1,7 +1,8 @@
 """
-ai_manager.py - Yapay Zeka Yöneticisi
-=======================================
-OpenAI API ile GPT-4o-mini modeli kullanarak hikaye üretir.
+ai_manager.py - Yapay Zeka Yöneticisi (LiteLLM)
+==================================================
+LiteLLM kullanarak 100+ farkli AI modeline tek bir API ile
+istek gonderir: OpenAI, Gemini, Claude, Llama vb.
 """
 
 import json
@@ -9,60 +10,135 @@ import os
 import threading
 from typing import Any, Callable, Dict, List, Optional
 
-from openai import OpenAI
+import litellm
+
+# LiteLLM'in gereksiz loglarini sustur
+litellm.suppress_debug_info = True
+litellm.set_verbose = False
 
 
 class AdventureAI:
-    """D&D macera hikayesi üreten yapay zeka yöneticisi."""
+    """D&D macera hikayesi üreten yapay zeka yöneticisi (LiteLLM)."""
 
-    DEFAULT_MODEL = "gpt-5.1"
-    DEFAULT_MAX_TOKENS = 32000
-    def __init__(self, api_key: Optional[str] = None, model: str = DEFAULT_MODEL, max_tokens: int = DEFAULT_MAX_TOKENS):
-        resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
+    DEFAULT_MODEL = "gemini/gemini-2.5-flash"
+    DEFAULT_MAX_TOKENS = 1024
+
+    def __init__(self, api_key: Optional[str] = None,
+                 model: str = DEFAULT_MODEL,
+                 max_tokens: int = DEFAULT_MAX_TOKENS):
+        resolved_key = api_key or os.environ.get("API_KEY", "")
         if not resolved_key:
-            raise ValueError("OPENAI_API_KEY ortam değişkenini ayarlayın.")
+            raise ValueError(
+                "API anahtari bulunamadi! "
+                "Ana menudeki Ayarlar ekranindan API anahtarinizi girin."
+            )
 
-        self.client = OpenAI(api_key=resolved_key)
-        self.model = model
+        self.api_key = resolved_key
+        self.model = self._normalize_model(model)
         self.max_tokens = max_tokens
+
+        # API key'i provider'a gore env var olarak ayarla
+        self._set_api_key_env(self.model, self.api_key)
+
         self._is_requesting: bool = False
         self._last_response: Optional[Dict[str, Any]] = None
         self._last_error: Optional[str] = None
         self._lock = threading.Lock()
 
-    def request_story(self, message_history: List[Dict[str, str]], callback: Optional[Callable] = None) -> None:
-        """Arka planda AI'dan hikaye isteği gönderir (non-blocking)."""
+        print(f"[*] AI motoru hazir: {self.model}")
+
+    @staticmethod
+    def _normalize_model(model: str) -> str:
+        """
+        Model adini LiteLLM formatina cevirir.
+        LiteLLM provider prefix'leri:
+          - gemini/    -> Google Gemini
+          - anthropic/ -> Anthropic Claude (veya claude- ile baslayan)
+          - openrouter/ -> OpenRouter
+          - (prefix yok) -> OpenAI
+        """
+        m = model.strip()
+
+        # Zaten prefix varsa dokunma
+        if "/" in m:
+            return m
+
+        # Gemini modelleri
+        if m.startswith("gemini"):
+            return f"gemini/{m}"
+
+        # Claude modelleri
+        if m.startswith("claude"):
+            return f"anthropic/{m}"
+
+        # OpenAI modelleri (gpt, o1, o3, o4 vb.) - prefix gerektirmez
+        return m
+
+    def _set_api_key_env(self, model: str, key: str) -> None:
+        """Model provider'ina gore uygun env var'i ayarlar."""
+        if model.startswith("gemini/"):
+            os.environ["GEMINI_API_KEY"] = key
+        elif model.startswith("anthropic/") or model.startswith("claude"):
+            os.environ["ANTHROPIC_API_KEY"] = key
+        elif model.startswith("openrouter/"):
+            os.environ["OPENROUTER_API_KEY"] = key
+        else:
+            # OpenAI ve diger modeller
+            os.environ["OPENAI_API_KEY"] = key
+
+    def _build_params(self, message_history: List[Dict[str, str]]) -> dict:
+        """LiteLLM completion parametrelerini olusturur."""
+        params: Dict[str, Any] = {
+            "model": self.model,
+            "messages": message_history,
+            "max_tokens": self.max_tokens,
+        }
+
+        # JSON modu - modele gore ayarla
+        model_lower = self.model.lower()
+
+        # OpenAI modelleri - response_format destekler
+        if any(model_lower.startswith(p) for p in ("gpt", "o1", "o3", "o4")):
+            params["response_format"] = {"type": "json_object"}
+        # Gemini modelleri - response_format destekler
+        elif "gemini" in model_lower:
+            params["response_format"] = {"type": "json_object"}
+
+        # Temperature (reasoning modelleri haric)
+        if not any(model_lower.startswith(p) for p in ("o1", "o3", "o4")):
+            params["temperature"] = 0.8
+
+        return params
+
+    # ------------------------------------------------------------------ #
+    #  PUBLIC API                                                          #
+    # ------------------------------------------------------------------ #
+
+    def request_story(self, message_history: List[Dict[str, str]],
+                      callback: Optional[Callable] = None) -> None:
+        """Arka planda AI'dan hikaye istegi gonderir (non-blocking)."""
         with self._lock:
             if self._is_requesting:
                 return
             self._is_requesting = True
             self._last_error = None
 
-        thread = threading.Thread(target=self._api_call_worker, args=(message_history, callback), daemon=True)
+        thread = threading.Thread(
+            target=self._api_call_worker,
+            args=(message_history, callback),
+            daemon=True
+        )
         thread.start()
 
     def request_story_sync(self, message_history: List[Dict[str, str]]) -> Dict[str, Any]:
-        """Senkron hikaye isteği (blocking)."""
+        """Senkron hikaye istegi (blocking)."""
         try:
-            # Yeni modeller (o1, o3, gpt-5 vb.) max_completion_tokens bekliyor
-            params = {
-                "model": self.model,
-                "messages": message_history,
-                "response_format": {"type": "json_object"}
-            }
-            
-            if self.model.startswith(("o1", "o3", "gpt-5")):
-                params["max_completion_tokens"] = self.max_tokens
-                # o1/o3 modelleri temperature=0.8 desteklemeyebilir (sadece 1.0)
-            else:
-                params["max_tokens"] = self.max_tokens
-                params["temperature"] = 0.8
-                
-            response = self.client.chat.completions.create(**params)
+            params = self._build_params(message_history)
+            response = litellm.completion(**params)
             content = response.choices[0].message.content.strip()
             return self._parse_response(content)
         except Exception as e:
-            raise RuntimeError(f"AI API çağrısı başarısız: {e}") from e
+            raise RuntimeError(f"AI API cagrisi basarisiz: {e}") from e
 
     def is_requesting(self) -> bool:
         with self._lock:
@@ -81,7 +157,7 @@ class AdventureAI:
             return error
 
     def generate_opening(self, character_summary: str) -> Dict[str, Any]:
-        """Oyunun açılış hikayesini üretir."""
+        """Oyunun acilis hikayesini uretir."""
         opening_messages = [
             {"role": "system", "content": (
                 "Sen bir D&D zindancisisin. Turkce hikaye anlat. "
@@ -94,21 +170,15 @@ class AdventureAI:
         ]
         return self.request_story_sync(opening_messages)
 
-    def _api_call_worker(self, message_history: List[Dict[str, str]], callback: Optional[Callable]) -> None:
-        try:
-            params = {
-                "model": self.model,
-                "messages": message_history,
-                "response_format": {"type": "json_object"}
-            }
-            
-            if self.model.startswith(("o1", "o3", "gpt-5")):
-                params["max_completion_tokens"] = self.max_tokens
-            else:
-                params["max_tokens"] = self.max_tokens
-                params["temperature"] = 0.8
+    # ------------------------------------------------------------------ #
+    #  PRIVATE                                                             #
+    # ------------------------------------------------------------------ #
 
-            response = self.client.chat.completions.create(**params)
+    def _api_call_worker(self, message_history: List[Dict[str, str]],
+                         callback: Optional[Callable]) -> None:
+        try:
+            params = self._build_params(message_history)
+            response = litellm.completion(**params)
             content = response.choices[0].message.content.strip()
             parsed = self._parse_response(content)
             with self._lock:
@@ -122,42 +192,39 @@ class AdventureAI:
                 self._is_requesting = False
 
     def _parse_response(self, raw_content: str) -> Dict[str, Any]:
-        """AI yanitini JSON olarak ayristirir (Regex ve AST ile)."""
+        """AI yanitini JSON olarak ayristirir."""
         import re
         import ast
         content = raw_content.strip()
-        
-        # Fallback (Hata durumunda donulecek varsayilan yapi)
+
         fallback = {
             "hikaye_metni": "Gizemli bir sis etrafini sardi... (AI yaniti okunamadi)",
             "feedback": "Sistem hatasi veya gecersiz format.",
             "secenekler": {
-                "sol_ust": "Ilerle", 
-                "sag_ust": "Etrafi arastir", 
-                "sol_alt": "Bekle", 
+                "sol_ust": "Ilerle",
+                "sag_ust": "Etrafi arastir",
+                "sol_alt": "Bekle",
                 "sag_alt": "Geri don"
             },
         }
 
         try:
-            # Metin icindeki JSON blogunu bul
             json_match = re.search(r'(\{.*\})', content, re.DOTALL)
             if json_match:
                 json_str = json_match.group(1)
                 try:
                     data = json.loads(json_str)
                 except json.JSONDecodeError:
-                    # Eger tek tirnak (Python dict) kullanmissa json patlar, ast ile kurtaralim:
                     data = ast.literal_eval(json_str)
-                    
+
                 if "hikaye_metni" in data and "secenekler" in data:
                     return data
-            
+
             try:
                 data = json.loads(content)
             except json.JSONDecodeError:
                 data = ast.literal_eval(content)
-                
+
             return data
         except Exception as e:
             print(f"\n[!] Ayristirma Hatasi: {e}\n[!] AI Yaniti: {raw_content}\n")

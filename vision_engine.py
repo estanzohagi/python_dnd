@@ -48,22 +48,29 @@ class HandTracker:
             dwell_time: Seçim için gereken bekleme süresi, saniye (varsayılan: 2.0).
         """
         self.dwell_time = dwell_time
+        self.camera_available = False
 
         # ----- Kamera Kurulumu -----
-        self.cap = cv2.VideoCapture(camera_index)
-        if not self.cap.isOpened():
-            raise RuntimeError(
-                f"Kamera açılamadı (index={camera_index}). "
-                "Lütfen kameranızın bağlı olduğundan emin olun."
-            )
+        try:
+            self.cap = cv2.VideoCapture(camera_index)
+            if not self.cap.isOpened():
+                print(f"[!] Kamera acilamadi (index={camera_index}).")
+                self.frame_width = 1280
+                self.frame_height = 720
+            else:
+                # Kamera cozunurlugunu 1280x720'ye zorla
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
-        # Kamera cozunurlugunu 1280x720'ye zorla (Windows'ta varsayilan 640x480 cok kucuk)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
-        self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        print(f"[*] Kamera cozunurlugu: {self.frame_width}x{self.frame_height}")
+                self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                self.camera_available = True
+                print(f"[*] Kamera cozunurlugu: {self.frame_width}x{self.frame_height}")
+        except Exception as e:
+            print(f"[!] Kamera hatasi: {e}")
+            self.cap = None
+            self.frame_width = 1280
+            self.frame_height = 720
 
         # ----- MediaPipe HandLandmarker Kurulumu -----
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hand_landmarker.task")
@@ -101,6 +108,8 @@ class HandTracker:
 
     def read_frame(self) -> Optional[np.ndarray]:
         """Kameradan bir kare okur (ayna efektli)."""
+        if not self.camera_available or self.cap is None:
+            return None
         success, frame = self.cap.read()
         if not success:
             return None
@@ -270,7 +279,7 @@ class HandTracker:
 
     def release(self) -> None:
         """Kamera ve MediaPipe kaynaklarını serbest bırakır."""
-        if self.cap.isOpened():
+        if self.cap is not None and self.cap.isOpened():
             self.cap.release()
         self.hand_landmarker.close()
 

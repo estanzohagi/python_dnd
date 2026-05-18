@@ -131,7 +131,12 @@ class GameUI:
         feedback = sanitize_text(feedback)
 
         # Baslik - moda gore degisir
-        if mode == "baslangic":
+        is_error = story.startswith("[HATA]")
+
+        if is_error:
+            title = "-- HATA --"
+            title_color = (60, 60, 255)  # Kirmizi
+        elif mode == "baslangic":
             title = "-- BASLANGIC --"
             title_color = (50, 200, 255)  # Altin/sari
         elif mode == "savas":
@@ -161,19 +166,22 @@ class GameUI:
         box_bottom = min(box_top + box_h, self.story_bottom)
 
         overlay = frame.copy()
+        box_bg = (20, 15, 30) if is_error else self.COLOR_BG_OVERLAY
         cv2.rectangle(overlay, (10, box_top), (self.w - 10, box_bottom),
-                      self.COLOR_BG_OVERLAY, -1)
+                      box_bg, -1)
         frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+        border_c = (60, 60, 220) if is_error else self.COLOR_BORDER
         cv2.rectangle(frame, (10, box_top), (self.w - 10, box_bottom),
-                      self.COLOR_BORDER, 1)
+                      border_c, 1)
 
-        # Metni ciz
+        # Metni ciz (hata ise kirmizi)
+        text_color = (80, 80, 255) if is_error else self.COLOR_TEXT_STORY
         y = self.story_top + 18
         for line in lines:
             if y > box_bottom - 5:
                 break
             cv2.putText(frame, line, (25, y), self.FONT,
-                        self.FONT_SCALE_STORY, self.COLOR_TEXT_STORY,
+                        self.FONT_SCALE_STORY, text_color,
                         self.FONT_THICKNESS_THIN, cv2.LINE_AA)
             y += line_height
 

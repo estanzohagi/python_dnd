@@ -24,6 +24,7 @@ from shape_challenge import ShapeChallenge, ShapeType
 from fist_challenge import FistChallenge
 from music_manager import MusicManager
 from dice_challenge import DiceChallenge
+from config_manager import load_config
 
 
 class DnDGame:
@@ -52,18 +53,31 @@ class DnDGame:
     # Basarili saldiri sonrasi ekstra tur sansi (%30)
     EXTRA_TURN_CHANCE = 0.30
 
-    def __init__(self):
-        # ----- Modülleri Başlat -----
-        print("[*] Kamera başlatılıyor...")
-        self.tracker = HandTracker(camera_index=0, dwell_time=2.0)
+    def __init__(self, config: dict = None):
+        self._config = config or load_config()
 
-        print("[*] AI motoru başlatılıyor...")
-        self.ai = AdventureAI()
+        # ----- Modulleri Baslat -----
+        camera_index = self._config.get("camera_index", 0)
+        print(f"[*] Kamera baslatiliyor (index={camera_index})...")
+        self.tracker = HandTracker(camera_index=camera_index, dwell_time=2.0)
 
-        print("[*] Oyun durumu hazırlanıyor...")
-        self.state = GameState(Character(name="Kahraman", char_class="Savaşçı"))
+        if not self.tracker.camera_available:
+            raise RuntimeError(
+                f"Kamera {camera_index} acilamadi. "
+                "Ayarlar menusunden kamera ID'nizi kontrol edin."
+            )
 
-        print("[*] Arayüz hazırlanıyor...")
+        print("[*] AI motoru baslatiliyor...")
+        self.ai = AdventureAI(
+            api_key=self._config.get("api_key"),
+            model=self._config.get("model_name", "gemini-2.5-flash"),
+            max_tokens=self._config.get("max_tokens", 1024),
+        )
+
+        print("[*] Oyun durumu hazirlaniyor...")
+        self.state = GameState(Character(name="Kahraman", char_class="Savasci"))
+
+        print("[*] Arayuz hazirlaniyor...")
         self.ui = GameUI(self.tracker.frame_width, self.tracker.frame_height)
 
         print("[*] Sekil challenge modulu hazirlaniyor...")
@@ -1191,6 +1205,7 @@ class DnDGame:
                 self.state.update_from_ai_response(response)
                 self.state.add_ai_response(str(response))
                 self.state.is_waiting_for_ai = False
+                self.state._api_error = False
 
                 # Muzik modu gecisi: savas <-> normal
                 current_mode = self.state.current_mode
@@ -1216,6 +1231,22 @@ class DnDGame:
             elif error:
                 print(f"[!] AI hatası: {error}")
                 self.state.is_waiting_for_ai = False
+                # Hatay ekranda goster
+                # Hata mesajini sadeleştir
+                err_short = str(error)
+                if "invalid_api_key" in err_short:
+                    err_short = "API anahtari gecersiz! Ayarlardan kontrol edin."
+                elif "quota" in err_short.lower() or "rate" in err_short.lower():
+                    err_short = "API kotasi doldu veya istek limiti asildi!"
+                elif "model" in err_short.lower() and "not found" in err_short.lower():
+                    err_short = "Secilen AI modeli bulunamadi! Ayarlardan degistirin."
+                elif "connection" in err_short.lower() or "timeout" in err_short.lower():
+                    err_short = "Baglanti hatasi! Internet baglantinizi kontrol edin."
+                elif len(err_short) > 80:
+                    err_short = err_short[:80] + "..."
+                self.state.current_story = f"[HATA] {err_short}"
+                self.state.current_feedback = "Tekrar denemek icin bir secenek secin."
+                self.state._api_error = True
 
     def _restart(self) -> None:
         """Oyunu yeniden başlatır."""
@@ -1236,19 +1267,36 @@ class DnDGame:
 
 def main():
     print("=" * 50)
-    print("  WEBCAM KONTROLLÜ D&D ROL YAPMA OYUNU")
-    print("  İşaret parmağınızı butonlarda 2sn bekletin")
-    print("  'Q' = Çıkış")
+    print("  WEBCAM KONTROLLU D&D ROL YAPMA OYUNU")
     print("=" * 50)
 
-    try:
-        game = DnDGame()
-        game.run()
-    except KeyboardInterrupt:
-        print("\n[*] Oyun kullanıcı tarafından durduruldu.")
-    except Exception as e:
-        print(f"\n[!] Hata: {e}")
-        sys.exit(1)
+    while True:
+        # ---- ANA MENU ----
+        from menu_system import MenuSystem
+        menu = MenuSystem()
+        config = menu.run()
+
+        if config.get("_action") == "exit":
+            print("[*] Oyundan cikiliyor...")
+            break
+
+        # ---- OYUNU BASLAT ----
+        try:
+            game = DnDGame(config=config)
+            game.run()
+        except KeyboardInterrupt:
+            print("\n[*] Oyun kullanici tarafindan durduruldu.")
+        except Exception as e:
+            print(f"\n[!] Hata: {e}")
+            # Hatadan sonra menuye don (crash etmesin)
+            import traceback
+            traceback.print_exc()
+            print("\n[*] Ana menuye donuluyor...")
+            continue
+
+        # Oyun bittiyse menuye don
+        print("\n[*] Ana menuye donuluyor...")
+        continue
 
 
 if __name__ == "__main__":
